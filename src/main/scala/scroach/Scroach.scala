@@ -178,9 +178,6 @@ object Scroach extends App {
   val hosts = flag("hosts", Seq(new InetSocketAddress(8080)), "Host:port of cockroach node(s)")
   val user = flag("user", "root", "Cockroach username.")
 
-  val key = "Cockroach".getBytes(Charsets.Utf8)
-  val value = "Hello".getBytes(Charsets.Utf8)
-
   def main() {
 
     val kv = {
@@ -191,27 +188,6 @@ object Scroach extends App {
 
     val client = KvClient(kv, user())
 
-    def print(msg: String, v: Option[Bytes]) = {
-      println(msg + (v.fold("None") { new String(_, Charsets.Utf8)}))
-    }
-
-    Await.result {
-      for {
-        _ <- client.delete(key)
-        tx <- client.tx(IsolationType.SNAPSHOT) { kv =>
-          val rich = KvClient(kv, user())
-          for {
-            _ <- rich.put(key, value)
-            got <- rich.get(key)
-            _ = print(s"in tx: ", got)
-            out <- client.get(key)
-            _ = print("out tx: ", out)
-          } yield got
-        }
-        got <- client.get(key)
-        _ = print("after tx: ", got)
-      } yield ()
-    }
-
+    // TODO: REPL
   }
 }
