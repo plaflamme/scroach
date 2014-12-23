@@ -2,6 +2,11 @@ import com.google.common.primitives.UnsignedBytes
 
 package object scroach {
 
+  sealed trait TxResult
+  case object TxComplete extends TxResult
+  case object TxAbort extends TxResult
+  case object TxRetry extends TxResult
+
   type Bytes = Array[Byte]
 
   val ByteZero = 0x00.toByte
