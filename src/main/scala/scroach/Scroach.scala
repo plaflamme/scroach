@@ -42,10 +42,10 @@ case class KvClient(kv: Kv, user: String) extends Client {
     val req = ContainsRequest(header = header(key))
     kv.containsEndpoint(req)
       .map {
-      case ContainsResponse(_, Some(contains)) => contains
-      case ContainsResponse(ResponseHeader(None, _, _), None) => false
-      case r => throw new RuntimeException(r.toString) // TODO: better error semantics
-    }
+        case ContainsResponse(_, Some(contains)) => contains
+        case ContainsResponse(NoError(_), None) => false
+        case r => throw new RuntimeException(r.toString) // TODO: better error semantics
+      }
   }
 
   def get(key: Bytes): Future[Option[Bytes]] = {
@@ -53,8 +53,8 @@ case class KvClient(kv: Kv, user: String) extends Client {
     kv.getEndpoint(req)
       .map {
         case GetResponse(_, Some(BytesValue(bytes))) => Some(bytes)
-        case GetResponse(ResponseHeader(None, _, _), Some(Value(None, _, _, _, _))) => None
-        case GetResponse(ResponseHeader(None, _, _), None) => None
+        case GetResponse(NoError(_), Some(Value(None, _, _, _, _))) => None
+        case GetResponse(NoError(_), None) => None
         case r => throw new RuntimeException(r.toString) // TODO: better error semantics
       }
   }
@@ -129,7 +129,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
         val req = ScanRequest(header = h, maxResults = batchSize)
         kv.scanEndpoint(req)
           .map {
-            case ScanResponse(ResponseHeader(None, _, _), rows) => rows.collect {
+            case ScanResponse(NoError(_), rows) => rows.collect {
               case KeyValue(key, BytesValue(bytes)) => (key.toByteArray, bytes)
             }
             case ScanResponse(ResponseHeader(Some(err), _, _), _) => throw new RuntimeException(err.toString) // TODO: better error semantics
@@ -157,7 +157,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
     val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
     kv.reapQueueEndpoint(req)
       .map {
-        case ReapQueueResponse(ResponseHeader(None, _, _), values) => values.collect {
+        case ReapQueueResponse(NoError(_), values) => values.collect {
           case BytesValue(bytes) => bytes
         }
       }
@@ -180,7 +180,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
             .map {
               case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionRetry.isDefined) => TxRetry
               case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionAborted.isDefined) => TxAbort
-              case EndTransactionResponse(ResponseHeader(None, _, _), _) => TxComplete
+              case EndTransactionResponse(NoError(_), _) => TxComplete
             }
             .map { _ -> result }
         }

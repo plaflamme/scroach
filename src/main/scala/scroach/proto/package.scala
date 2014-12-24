@@ -25,6 +25,18 @@ package object proto {
     }
   }
 
+  /**
+   * Matches the header of a response that has no error set
+   */
+  object NoError {
+    def unapply(h: ResponseHeader) = {
+      h match {
+        case ResponseHeader(None, _, _) => Some(h)
+        case _ => None
+      }
+    }
+  }
+
   trait CockroachRequest[M <: MessageLite] {
     val header: RequestHeader
     def tx(txn: Transaction): M
