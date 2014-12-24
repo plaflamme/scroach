@@ -55,14 +55,14 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
     def apply(req: Req, service: Service[Req, Res]) = {
       service(req.tx(tx.get))
         .map { response =>
-        response.header.txn match {
-          case Some(niu) => {
-            tx.set(merge(tx.get, niu))
-            response
+          response.header.txn match {
+            case Some(niu) => {
+              tx.set(merge(tx.get, niu))
+              response
+            }
+            case None => response
           }
-          case None => response
         }
-      }
     }
   }
 
@@ -90,9 +90,9 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
       println(s"req == $req")
       service(req)
         .map { res =>
-        println(s"res == $res")
-        res
-      }
+          println(s"res == $res")
+          res
+        }
     }
   }
   private[this] case class ProtobufFilter[Req <: MessageLite, Res <: MessageLite](cmd: String, parse: (InputStream) => Res) extends Filter[Req, Res, Request, Response] {
@@ -106,8 +106,8 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
 
       service(request)
         .map { response =>
-        parse(response.content)
-      }
+          parse(response.content)
+        }
     }
   }
   val containsEndpoint = newEndpoint[ContainsRequest, ContainsResponse]("Contains", ContainsResponse.parseFrom)
