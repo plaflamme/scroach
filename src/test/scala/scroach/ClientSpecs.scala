@@ -199,15 +199,15 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     for {
       _ <- client.delete(key)
       tx <- client.tx(IsolationType.SNAPSHOT) { kv =>
-        val rich = KvClient(kv, user())
+        val txClient = KvClient(kv, "root")
         for {
-          _ <- rich.put(key, value)
-          inner <- rich.get(key)
-          outter <- client.get(key)
+          _ <- txClient.put(key, value)
+          inner <- txClient.get(key)
+          outer <- client.get(key)
         } yield {
           inner should be ('defined)
           inner.get should equal (value)
-          outter should be ('empty)
+          outer should be ('empty)
           inner
         }
       }
