@@ -211,8 +211,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     val key = randomBytes
     val value = randomBytes
     for {
-      _ <- client.delete(key)
-      tx <- client.tx(IsolationType.SNAPSHOT) { kv =>
+      _ <- client.tx(IsolationType.SNAPSHOT) { kv =>
         val txClient = KvClient(kv, "root")
         for {
           _ <- txClient.put(key, value)
@@ -229,6 +228,35 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     } yield {
       got should be ('defined)
       got.get should equal (value)
+    }
+  }
+
+  it should "handle serializable isolation" in withClient { client =>
+
+    // Reads value at o, appends to v if it exists and writes to k
+    def readWrite(k: Bytes, o: Bytes, v: Bytes) = {
+      client.tx() { kv =>
+        val txClient = KvClient(kv, "root")
+        for {
+          vo <- txClient.get(o)
+          write = v ++ vo.getOrElse(Array.empty)
+          _ <- txClient.put(k, write)
+        } yield new String(write)
+      }
+    }
+
+    val k1 = randomBytes
+    val k2 = randomBytes
+
+    for {
+      (writtenAtK1, writtenAtK2) <- readWrite(k1, k2, randomBytes) join readWrite(k2, k1, randomBytes)
+      valueAtK1 <- client.get(k1)
+      valueAtK2 <- client.get(k2)
+    } yield {
+      println(s"written at K1 ${writtenAtK1}")
+      println(s"written at K2 ${writtenAtK2}")
+      println(s"read at K1 ${valueAtK1.map(new String(_))}")
+      println(s"read at K2 ${valueAtK2.map(new String(_))}")
     }
   }
 

@@ -55,13 +55,14 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
     def apply(req: Req, service: Service[Req, Res]) = {
       service(req.tx(tx.get))
         .map { response =>
-          response.header.txn match {
-            case Some(niu) => {
-              tx.set(merge(tx.get, niu))
-              response
+          response.header match {
+            case ResponseHeader(Some(err), _, Some(txn)) if(err.transactionAborted.isDefined) => {
+              tx.set(Transaction(name = Some(name), isolation = Some(isolation), priority = txn.priority))
             }
-            case None => response
+            case ResponseHeader(_, _, Some(niu)) => tx.set(merge(tx.get, niu))
+            case _ => ()
           }
+          response
         }
     }
   }

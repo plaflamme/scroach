@@ -178,7 +178,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
     def tryTx(backoffs: Stream[Duration]): Future[T] = {
       f(txKv)
         .liftToTry
-        .flatMap { result =>
+        .flatMap { result => // TODO: handle ReadWithinUncertaintyIntervalError as a retry
           val endRequest = EndTransactionRequest(header = header(), commit = Some(result.isReturn))
           txKv.endTxEndpoint(endRequest)
             .map {
