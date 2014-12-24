@@ -5,9 +5,10 @@ import java.net.InetSocketAddress
 import com.google.protobuf.{ByteString}
 import com.twitter.app.App
 import com.twitter.concurrent.{SpoolSource, Spool}
+import com.twitter.conversions.time._
 import com.twitter.finagle._
-import com.twitter.io.Charsets
-import com.twitter.util.{Return, Throw, Future, Await}
+import com.twitter.finagle.service.Backoff
+import com.twitter.util._
 import proto._
 
 // TODO: handle bytes vs. counter values. For example get for a counter would return Future[Long]
@@ -168,10 +169,13 @@ case class KvClient(kv: Kv, user: String) extends Client {
     kv.enqueueEndpoint(req).unit // TODO: error handling
   }
 
+  // Exponential backoff from 50.ms to 3600.ms then constant 5.seconds
+  private[this] val DefaultBackoffs = Backoff.exponential(50.milliseconds, 2).take(6) ++ Backoff.const(5.seconds)
+
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T] = {
     val txKv = TxKv(kv, isolation = isolation)
 
-    def tryTx(): Future[T] = { // TODO: limit and backoff
+    def tryTx(backoffs: Stream[Duration]): Future[T] = {
       f(txKv)
         .liftToTry
         .flatMap { result =>
@@ -179,18 +183,23 @@ case class KvClient(kv: Kv, user: String) extends Client {
           txKv.endTxEndpoint(endRequest)
             .map {
               case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionRetry.isDefined) => TxRetry
-              case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionAborted.isDefined) => TxAbort
+              case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
               case EndTransactionResponse(NoError(_), _) => TxComplete
             }
             .map { _ -> result }
         }
         .flatMap {
           case (TxComplete, result) => Future.const(result)
-          case (TxRetry, _) => tryTx()
-          case _ => Future.exception(new RuntimeException) // TODO: handle TxAbort
+          case (TxRetry, _) => tryTx(DefaultBackoffs)
+          case (TxAbort, _) => backoffs match {
+            case howlong #:: rest => Future sleep(howlong) before tryTx(rest)
+            case _ => Future.exception(new RuntimeException) // This should never happen since the backoff stream is unbounded.
+          }
+          case _ => Future.exception(new RuntimeException) // TODO: better error semantics
         }
     }
-    tryTx()
+
+    tryTx(DefaultBackoffs)
   }
 }
 

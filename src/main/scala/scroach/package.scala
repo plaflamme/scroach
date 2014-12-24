@@ -1,6 +1,9 @@
 import com.google.common.primitives.UnsignedBytes
+import com.twitter.util.JavaTimer
 
 package object scroach {
+
+  private[scroach] implicit val Timer = new JavaTimer(isDaemon = true)
 
   sealed trait TxResult
   case object TxComplete extends TxResult
