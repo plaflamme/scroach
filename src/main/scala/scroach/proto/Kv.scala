@@ -55,7 +55,7 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
     def apply(req: Req, service: Service[Req, Res]) = {
       service(req.tx(tx.get))
         .map { response =>
-        response.tx() match {
+        response.header.txn match {
           case Some(niu) => {
             tx.set(merge(tx.get, niu))
             response
