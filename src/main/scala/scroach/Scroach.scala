@@ -7,7 +7,7 @@ import com.twitter.app.App
 import com.twitter.concurrent.{SpoolSource, Spool}
 import com.twitter.finagle._
 import com.twitter.io.Charsets
-import com.twitter.util.{ Future, Await}
+import com.twitter.util.{Return, Throw, Future, Await}
 import proto._
 
 // TODO: handle bytes vs. counter values. For example get for a counter would return Future[Long]
@@ -31,6 +31,9 @@ case class ConditionFailedException(actualValue: Option[Bytes]) extends RuntimeE
 
 case class KvClient(kv: Kv, user: String) extends Client {
   private[this] val someUser = Some(user)
+  private[this] def header() = {
+    RequestHeader(user = someUser)
+  }
   private[this] def header(key: Bytes) = {
     RequestHeader(user = someUser, key = Option(key).map(ByteString.copyFrom(_)))
   }
@@ -167,20 +170,22 @@ case class KvClient(kv: Kv, user: String) extends Client {
 
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T] = {
     val txKv = TxKv(kv, isolation = isolation)
+
     def tryTx(): Future[T] = { // TODO: limit and backoff
-      f(txKv) // TODO: end TX on exception with commit = false
+      f(txKv)
+        .liftToTry
         .flatMap { result =>
-          val endRequest = EndTransactionRequest(header = header(null), commit = Some(true)) // TODO: get rid of null here
+          val endRequest = EndTransactionRequest(header = header(), commit = Some(result.isReturn))
           txKv.endTxEndpoint(endRequest)
             .map {
               case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionRetry.isDefined) => TxRetry
               case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionAborted.isDefined) => TxAbort
               case EndTransactionResponse(ResponseHeader(None, _, _), _) => TxComplete
             }
-            .map { _ -> result}
+            .map { _ -> result }
         }
         .flatMap {
-          case (TxComplete, result) => Future.value(result)
+          case (TxComplete, result) => Future.const(result)
           case (TxRetry, _) => tryTx()
           case _ => Future.exception(new RuntimeException) // TODO: handle TxAbort
         }

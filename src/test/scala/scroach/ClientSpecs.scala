@@ -3,7 +3,6 @@ package scroach
 import com.twitter.finagle.Httpx
 import com.twitter.io.Charsets
 import com.twitter.util.{Future, Await}
-import scroach.Scroach._
 import scroach.proto.{IsolationType, HttpKv}
 
 import scala.collection.JavaConverters._
@@ -190,6 +189,21 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
       everything should be (42)
       nothing should be (0)
       stillNothing should be (0)
+    }
+  }
+
+  it should "abort tx on failure" in withClient { client =>
+    val key = randomBytes
+
+    for {
+      tx <- client.tx() { kv =>
+        val txClient = KvClient(kv, "root")
+        txClient.put(key, randomBytes)
+          .map { _ => throw new RuntimeException("doh!") }
+      }.liftToTry
+      got <- client.get(key)
+    } yield {
+      got should be ('empty)
     }
   }
 
