@@ -21,6 +21,8 @@ trait Kv {
   val endTxEndpoint: Service[EndTransactionRequest, EndTransactionResponse]
 }
 
+case class CockroachException[M <: MessageLite](error: Error, response: M) extends Exception(error.toString)
+
 /**
  * Wraps another Kv instance adding transactional semantics to requests and responses.
  *
@@ -90,13 +92,12 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
     def apply(req: Req, service: Service[Req,Res]) = {
       println(s"req == $req")
       service(req)
-        .map { res =>
+        .respond { res =>
           println(s"res == $res")
-          res
         }
     }
   }
-  private[this] case class ProtobufFilter[Req <: MessageLite, Res <: MessageLite](cmd: String, parse: (InputStream) => Res) extends Filter[Req, Res, Request, Response] {
+  private[this] case class ProtobufFilter[Req <: MessageLite, Res <: MessageLite <% CockroachResponse[Res]](cmd: String, parse: (InputStream) => Res) extends Filter[Req, Res, Request, Response] {
     def apply(req: Req, service: Service[Request, Response]) = {
       val request = RequestBuilder
         .create()
@@ -108,6 +109,12 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
       service(request)
         .map { response =>
           parse(response.content)
+        }
+        .map { proto =>
+          proto.header match {
+            case HasError(err) => throw CockroachException(err, proto)
+            case _ => proto
+          }
         }
     }
   }
@@ -123,7 +130,7 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
   val enqueueEndpoint = newEndpoint[EnqueueMessageRequest, EnqueueMessageResponse]("EnqueueMessage", EnqueueMessageResponse.parseFrom)
   val endTxEndpoint = newEndpoint[EndTransactionRequest, EndTransactionResponse]("EndTransaction", EndTransactionResponse.parseFrom)
 
-  private[this] def newEndpoint[Req <: MessageLite, Res <: MessageLite](name: String, parseFrom: (InputStream) => Res): Service[Req, Res] = {
+  private[this] def newEndpoint[Req <: MessageLite, Res <: MessageLite <% CockroachResponse[Res]](name: String, parseFrom: (InputStream) => Res): Service[Req, Res] = {
     // TODO: retrying semantics for 429 and possibly 500s
     LoggingFilter[Req, Res] andThen ProtobufFilter[Req, Res](name, parseFrom) andThen client
   }

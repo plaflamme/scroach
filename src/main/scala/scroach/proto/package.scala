@@ -36,6 +36,14 @@ package object proto {
       }
     }
   }
+  object HasError {
+    def unapply(h: ResponseHeader) = {
+      h match {
+        case ResponseHeader(Some(err), _, _) => Some(err)
+        case _ => None
+      }
+    }
+  }
 
   trait CockroachRequest[M <: MessageLite] {
     val header: RequestHeader

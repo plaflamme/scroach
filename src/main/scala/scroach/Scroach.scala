@@ -45,7 +45,6 @@ case class KvClient(kv: Kv, user: String) extends Client {
       .map {
         case ContainsResponse(_, Some(contains)) => contains
         case ContainsResponse(NoError(_), None) => false
-        case r => throw new RuntimeException(r.toString) // TODO: better error semantics
       }
   }
 
@@ -56,18 +55,17 @@ case class KvClient(kv: Kv, user: String) extends Client {
         case GetResponse(_, Some(BytesValue(bytes))) => Some(bytes)
         case GetResponse(NoError(_), Some(Value(None, _, _, _, _))) => None
         case GetResponse(NoError(_), None) => None
-        case r => throw new RuntimeException(r.toString) // TODO: better error semantics
       }
   }
 
   def put(key: Bytes, value: Bytes): Future[Unit] = {
     val req = PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value)))))
-    kv.putEndpoint(req).unit // TODO: error handling
+    kv.putEndpoint(req).unit
   }
 
   def put(key: Bytes, value: Long): Future[Unit] = {
     val req = PutRequest(header = header(key), value = Some(Value(integer = Some(value))))
-    kv.putEndpoint(req).unit // TODO: error handling
+    kv.putEndpoint(req).unit
   }
 
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit] = {
@@ -80,12 +78,10 @@ case class KvClient(kv: Kv, user: String) extends Client {
       value = Value(bytes = value.map(ByteString.copyFrom(_)))
     )
     kv.casEndpoint(req)
-      .map {
-        case ConditionalPutResponse(ResponseHeader(Some(err), _, _), actual) => {
-          throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
-        }
-        case _ => ()
+      .handle {
+        case CockroachException(err, ConditionalPutResponse(_, actual)) => throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
       }
+      .unit
   }
 
   def increment(key: Bytes, amount: Long): Future[Long] = {
@@ -96,13 +92,12 @@ case class KvClient(kv: Kv, user: String) extends Client {
     kv.incrementEndpoint(req)
       .map {
         case IncrementResponse(_, Some(newValue)) => newValue
-        case IncrementResponse(ResponseHeader(Some(err), _, _), _) => throw new RuntimeException(err.toString) // TODO: better error semantics
       }
   }
 
   def delete(key: Bytes): Future[Unit] = {
     val deleteRequest = DeleteRequest(header = header(key))
-    kv.deleteEndpoint(deleteRequest).unit // TODO: error handling
+    kv.deleteEndpoint(deleteRequest).unit
   }
 
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long): Future[Long] = {
@@ -115,7 +110,6 @@ case class KvClient(kv: Kv, user: String) extends Client {
       kv.deleteRangeEndpoint(req)
         .map {
           case DeleteRangeResponse(_, Some(deleted)) => deleted
-          case DeleteRangeResponse(ResponseHeader(Some(err), _, _), _) => throw new RuntimeException(err.toString) // TODO: better error semantics
         }
     }
   }
@@ -133,7 +127,6 @@ case class KvClient(kv: Kv, user: String) extends Client {
             case ScanResponse(NoError(_), rows) => rows.collect {
               case KeyValue(key, BytesValue(bytes)) => (key.toByteArray, bytes)
             }
-            case ScanResponse(ResponseHeader(Some(err), _, _), _) => throw new RuntimeException(err.toString) // TODO: better error semantics
           }
       }
     }
@@ -166,7 +159,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
 
   def enqueueMessage(key: Bytes, message: Bytes): Future[Unit] = {
     val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
-    kv.enqueueEndpoint(req).unit // TODO: error handling
+    kv.enqueueEndpoint(req).unit
   }
 
   // Exponential backoff from 50.ms to 3600.ms then constant 5.seconds
@@ -182,9 +175,11 @@ case class KvClient(kv: Kv, user: String) extends Client {
           val endRequest = EndTransactionRequest(header = header(), commit = Some(result.isReturn))
           txKv.endTxEndpoint(endRequest)
             .map {
-              case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionRetry.isDefined) => TxRetry
-              case EndTransactionResponse(ResponseHeader(Some(err), _, _), _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
               case EndTransactionResponse(NoError(_), _) => TxComplete
+            }
+            .handle {
+              case CockroachException(err, _) if(err.transactionRetry.isDefined) => TxRetry
+              case CockroachException(err, _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
             }
             .map { _ -> result }
         }
