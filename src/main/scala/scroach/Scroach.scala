@@ -16,15 +16,18 @@ trait Client {
   def contains(key: Bytes): Future[Boolean]
   def get(key: Bytes): Future[Option[Bytes]]
   def put(key: Bytes, value: Bytes): Future[Unit]
+  def put(key: Bytes, value: Long): Future[Unit]
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit]
   def increment(key: Bytes, amount: Long): Future[Long]
   def delete(key: Bytes): Future[Unit]
-  def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = 0): Future[Long]
+  def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Future[Long]
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
   def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
   def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T]
 }
+
+case class ConditionFailedException(actualValue: Option[Bytes]) extends RuntimeException
 
 case class KvClient(kv: Kv, user: String) extends Client {
   private[this] val someUser = Some(user)
@@ -46,7 +49,8 @@ case class KvClient(kv: Kv, user: String) extends Client {
     val req = GetRequest(header = header(key))
     kv.getEndpoint(req)
       .map {
-        case GetResponse(_, Some(Value(bytes, _, _, _, _))) => bytes.map(_.toByteArray)
+        case GetResponse(_, Some(BytesValue(bytes))) => Some(bytes)
+        case GetResponse(ResponseHeader(None, _, _), Some(Value(None, _, _, _, _))) => None
         case GetResponse(ResponseHeader(None, _, _), None) => None
         case r => throw new RuntimeException(r.toString) // TODO: better error semantics
       }
@@ -54,6 +58,11 @@ case class KvClient(kv: Kv, user: String) extends Client {
 
   def put(key: Bytes, value: Bytes): Future[Unit] = {
     val req = PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value)))))
+    kv.putEndpoint(req).unit // TODO: error handling
+  }
+
+  def put(key: Bytes, value: Long): Future[Unit] = {
+    val req = PutRequest(header = header(key), value = Some(Value(integer = Some(value))))
     kv.putEndpoint(req).unit // TODO: error handling
   }
 
@@ -66,7 +75,13 @@ case class KvClient(kv: Kv, user: String) extends Client {
       expValue = previous.map(p => Value(bytes = Some(ByteString.copyFrom(p)))),
       value = Value(bytes = value.map(ByteString.copyFrom(_)))
     )
-    kv.casEndpoint(req).unit // TODO: error handling
+    kv.casEndpoint(req)
+      .map {
+        case ConditionalPutResponse(ResponseHeader(Some(err), _, _), actual) => {
+          throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
+        }
+        case _ => ()
+      }
   }
 
   def increment(key: Bytes, amount: Long): Future[Long] = {
@@ -87,7 +102,8 @@ case class KvClient(kv: Kv, user: String) extends Client {
   }
 
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long): Future[Long] = {
-    require(maxToDelete > 0, "maxToDelete must be >= 0")
+    require(maxToDelete >= 0, "maxToDelete must be >= 0")
+    require(from <= to, "from should be less or equal to") // TODO: should from be strictly less than to?
     if(maxToDelete == 0) Future.value(0) // short-circuit
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
@@ -152,7 +168,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T] = {
     val txKv = TxKv(kv, isolation = isolation)
     def tryTx(): Future[T] = { // TODO: limit and backoff
-      f(txKv)
+      f(txKv) // TODO: end TX on exception with commit = false
         .flatMap { result =>
           val endRequest = EndTransactionRequest(header = header(null), commit = Some(true)) // TODO: get rid of null here
           txKv.endTxEndpoint(endRequest)
