@@ -336,7 +336,7 @@ message ResponseUnion {
 // parallel, or if applicable (based on write-only commands and
 // range-locality), as a single update.
 message BatchRequest {
-  optional RequestHeader header = 1 [(gogoproto.nullable) = false, (gogoproto.embed) = true];
+  required RequestHeader header = 1 [(gogoproto.nullable) = false, (gogoproto.embed) = true];
   repeated RequestUnion requests = 2 [(gogoproto.nullable) = false];
 }
 
@@ -345,7 +345,7 @@ message BatchRequest {
 // error in the response header is set to the first error from the
 // slice of responses, if applicable.
 message BatchResponse {
-  optional ResponseHeader header = 1 [(gogoproto.nullable) = false, (gogoproto.embed) = true];
+  required ResponseHeader header = 1 [(gogoproto.nullable) = false, (gogoproto.embed) = true];
   repeated ResponseUnion responses = 2 [(gogoproto.nullable) = false];
 }
 

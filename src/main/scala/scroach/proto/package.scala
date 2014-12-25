@@ -144,6 +144,15 @@ package object proto {
   implicit class RichEnqueueMessageResponse(res: EnqueueMessageResponse) extends CockroachResponse[EnqueueMessageResponse] {
     val header = res.header
   }
+  implicit class RichBatchRequest(req: BatchRequest) extends CockroachRequest[BatchRequest] {
+    val header = req.header
+    def tx(txn: Transaction) = {
+      req.copy(header = req.header.copy(txn = Some(txn)))
+    }
+  }
+  implicit class RichBatchResponse(res: BatchResponse) extends CockroachResponse[BatchResponse] {
+    val header = res.header
+  }
   implicit class RichEndTransactionRequest(req: EndTransactionRequest) extends CockroachRequest[EndTransactionRequest] {
     val header = req.header
     def tx(txn: Transaction) = {

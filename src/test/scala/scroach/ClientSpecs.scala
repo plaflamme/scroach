@@ -70,6 +70,13 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     }
   }
 
+  def withBatchClient[T](test: BatchClient => Batch[T]) = {
+    val client = BatchClient(HttpKv(cluster()), "root")
+    Await.result {
+      client.run(test(client))
+    }
+  }
+
   "A Client" should "read None when value not present" in withClient { client =>
     val key = randomBytes
     for {
@@ -258,6 +265,38 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
       println(s"read at K1 ${valueAtK1.map(new String(_))}")
       println(s"read at K2 ${valueAtK2.map(new String(_))}")
     }
+  }
+
+  "BatchClient" should "handle contains" in withBatchClient { client =>
+    Batch.collect(Seq(client.contains(randomBytes), client.contains(randomBytes)))
+      .map { contains =>
+        contains forall { _ == false } should be(true)
+      }
+  }
+
+  it should "handle asymmetric batches" in withBatchClient { client =>
+    val k1 = randomBytes
+    val k2 = randomBytes
+
+    // Put to one of the keys
+    Await.result(client.run(client.put(k1, randomBytes)))
+    // This should make 3 round-trips:
+    // 1- contains(k1), contains(k2)
+    // 2- put(k2, _)
+    // 3- contains(k1), contains(k2)
+
+    Batch.collect(Seq(client.contains(k1).map(k1 -> _), client.contains(k2).map(k2 -> _)))
+      .flatMap { contains =>
+        Batch.collect(contains.map { case(k,c) =>
+          if(!c) client.put(k, randomBytes) else Batch.const(())
+        })
+      }
+      .flatMap { _ =>
+        Batch.collect(Seq(client.contains(k1), client.contains(k2)))
+      }
+      .map { contains =>
+        contains forall(_ == true) should be (true)
+      }
   }
 
 }

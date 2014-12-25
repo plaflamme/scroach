@@ -2,7 +2,7 @@ package scroach
 
 import java.net.InetSocketAddress
 
-import com.google.protobuf.{ByteString}
+import com.google.protobuf.ByteString
 import com.twitter.app.App
 import com.twitter.concurrent.{SpoolSource, Spool}
 import com.twitter.conversions.time._
@@ -26,6 +26,136 @@ trait Client {
   def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
   def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T]
+}
+
+trait Batch[+A] {
+
+  def map[B](f: A => B): Batch[B]
+
+  def flatMap[B](f: A => Batch[B]): Batch[B]
+
+  def zip[B](other: Batch[B]): Batch[(A,B)] = (this, other) match {
+    case (Complete(a), Complete(b)) => {
+      Complete(
+        for { x <- a; y <- b} yield (x,y)
+      )
+    }
+    case (Pending(r, h), c@Complete(_)) => Pending(r, h andThen { o => o zip c })
+    case (c@Complete(_), Pending(r, h)) => Pending(r, h andThen { o => c zip o })
+    case (Pending(l, lh), Pending(r, rh)) => {
+      Pending(l ++ r, { out =>
+        lh(out.take(l.size)) zip rh(out.drop(l.size))
+      })
+    }
+  }
+
+  private[scroach] def run(f: Seq[RequestUnion] => Future[Seq[Try[ResponseUnion]]]): Future[A]
+}
+
+case class Complete[A](value: Try[A]) extends Batch[A] {
+
+  def map[B](f: A => B): Batch[B] = {
+    Complete(value.map(f))
+  }
+
+  def flatMap[B](f: A => Batch[B]): Batch[B] = {
+    value match {
+      case Return(a) => f(a)
+      case Throw(t) => Batch.exception(t)
+    }
+  }
+
+  override def run(f: Seq[RequestUnion] => Future[Seq[Try[ResponseUnion]]]): Future[A] = Future.const(value)
+}
+
+case class Pending[A](reqs: Seq[RequestUnion], handler: Seq[Try[ResponseUnion]] => Batch[A]) extends Batch[A] {
+  def map[B](f: A => B): Batch[B] = {
+    Pending(reqs, handler andThen { _.map(f) })
+  }
+
+  def flatMap[B](f: A => Batch[B]): Batch[B] = {
+    Pending(reqs, handler andThen { _.flatMap(f) })
+  }
+
+  override def run(f: Seq[RequestUnion] => Future[Seq[Try[ResponseUnion]]]): Future[A] = {
+    for {
+      out <- f(reqs)
+      a <- handler(out).run(f)
+    } yield a
+  }
+
+}
+
+object Batch {
+
+  def single(req: RequestUnion): Batch[ResponseUnion] = {
+    Pending[ResponseUnion](Seq(req), { r => Complete(r.head) })
+  }
+
+  def const[A](a: A) = Complete(Return(a))
+
+  def exception[A](ex: Throwable) = Complete(Throw[A](ex))
+
+  def collect[T](batches: Seq[Batch[T]]): Batch[Seq[T]] = {
+    batches.size match {
+      case 0 => const(Seq.empty)
+      case 1 => batches.head.map { v => Seq(v)}
+      case n => {
+        val (left, right) = batches.splitAt(n / 2)
+        (collect(left) zip collect(right)).map { case (l, r) => l ++ r}
+      }
+    }
+  }
+
+}
+
+case class BatchClient(kv: Kv, user: String) {
+  private[this] val someUser = Some(user)
+  private[this] def header() = {
+    RequestHeader(user = someUser)
+  }
+  private[this] def header(key: Bytes) = {
+    RequestHeader(user = someUser, key = Option(key).map(ByteString.copyFrom(_)))
+  }
+  def contains(key: Bytes): Batch[Boolean] = {
+    Batch.single(RequestUnion(contains = Some(ContainsRequest(header = header(key)))))
+      .map { r =>
+        r.contains.get
+      }
+      .map {
+        case r@ContainsResponse(HasError(err), _) => throw CockroachException(err, r)
+        case ContainsResponse(_, Some(contains)) => contains
+        case ContainsResponse(NoError(_), None) => false
+      }
+  }
+  def get(key: Bytes): Batch[Option[Bytes]] = ???
+  def put(key: Bytes, value: Bytes): Batch[Unit] = {
+    Batch.single(RequestUnion(put = Some(PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value))))))))
+      .map { r =>
+        r.put.get
+      }
+      .map {
+        case r@PutResponse(HasError(err)) => throw CockroachException(err, r)
+        case _ => ()
+      }
+  }
+  def put(key: Bytes, value: Long): Batch[Unit] = ???
+  def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Batch[Unit] = ???
+  def increment(key: Bytes, amount: Long): Batch[Long] = ???
+  def delete(key: Bytes): Batch[Unit] = ???
+  def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long] = ???
+  def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit] = ???
+  def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]] = ???
+
+  def run[A](batch: Batch[A]): Future[A] = {
+    batch.run { input =>
+      val batchRequest = BatchRequest(header = header(), requests = input.toVector)
+      kv.batchEndpoint(batchRequest)
+        .map { r =>
+          r.responses.map(Return(_)) // TODO: the Try semantics should be moved down into the response type e.g: Try[ContainsResponse]
+        }
+    }
+  }
 }
 
 case class ConditionFailedException(actualValue: Option[Bytes]) extends RuntimeException

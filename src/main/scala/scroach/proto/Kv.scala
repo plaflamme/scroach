@@ -18,6 +18,7 @@ trait Kv {
   val scanEndpoint: Service[ScanRequest, ScanResponse]
   val reapQueueEndpoint: Service[ReapQueueRequest, ReapQueueResponse]
   val enqueueEndpoint: Service[EnqueueMessageRequest, EnqueueMessageResponse]
+  val batchEndpoint: Service[BatchRequest, BatchResponse]
   val endTxEndpoint: Service[EndTransactionRequest, EndTransactionResponse]
 }
 
@@ -79,6 +80,7 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
   val scanEndpoint = TxFilter[ScanRequest, ScanResponse]() andThen kv.scanEndpoint
   val reapQueueEndpoint = TxFilter[ReapQueueRequest, ReapQueueResponse]() andThen kv.reapQueueEndpoint
   val enqueueEndpoint = TxFilter[EnqueueMessageRequest, EnqueueMessageResponse]() andThen kv.enqueueEndpoint
+  val batchEndpoint = TxFilter[BatchRequest, BatchResponse]() andThen kv.batchEndpoint
   val endTxEndpoint = TxFilter[EndTransactionRequest, EndTransactionResponse]() andThen kv.endTxEndpoint
 }
 
@@ -128,6 +130,7 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
   val scanEndpoint = newEndpoint[ScanRequest, ScanResponse]("Scan", ScanResponse.parseFrom)
   val reapQueueEndpoint = newEndpoint[ReapQueueRequest, ReapQueueResponse]("ReapQueue", ReapQueueResponse.parseFrom)
   val enqueueEndpoint = newEndpoint[EnqueueMessageRequest, EnqueueMessageResponse]("EnqueueMessage", EnqueueMessageResponse.parseFrom)
+  val batchEndpoint = newEndpoint[BatchRequest, BatchResponse]("Batch", BatchResponse.parseFrom)
   val endTxEndpoint = newEndpoint[EndTransactionRequest, EndTransactionResponse]("EndTransaction", EndTransactionResponse.parseFrom)
 
   private[this] def newEndpoint[Req <: MessageLite, Res <: MessageLite <% CockroachResponse[Res]](name: String, parseFrom: (InputStream) => Res): Service[Req, Res] = {
