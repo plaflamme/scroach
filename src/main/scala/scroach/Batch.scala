@@ -214,12 +214,14 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
 
   def run[A](batch: Batch[A]): Future[A] = {
     batch.run { input =>
-      // TODO: short-circuit batches of zero
-      // TODO: short-circuit batches of one (?)
-      val batchRequest = BatchRequest(header = header(), requests = input.toVector)
-      kv.batchEndpoint(batchRequest)
-        .map { r =>
-        r.responses.map(Return(_)) // TODO: the Try semantics should be moved down into the response type e.g: Try[ContainsResponse]
+      if(input.isEmpty) Future.value(Seq.empty)
+      else {
+        // TODO: short-circuit batches of one (?). If we do this, we could actually write the normal client in terms of this one.
+        val batchRequest = BatchRequest(header = header(), requests = input.toVector)
+        kv.batchEndpoint(batchRequest)
+          .map {
+            _.responses.map(Return(_)) // TODO: the Try semantics should be moved down into the response type e.g: Try[ContainsResponse]
+          }
       }
     }
   }
