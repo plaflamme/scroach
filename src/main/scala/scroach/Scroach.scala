@@ -40,6 +40,11 @@ private[scroach] object ResponseHandlers {
   val deleteRange = handler[DeleteRangeResponse, Long] {
     case DeleteRangeResponse(_, Some(deleted)) => deleted
   }
+  val scan = handler[ScanResponse, Seq[(Bytes, Bytes)]] {
+    case ScanResponse(NoError(_), rows) => rows.collect {
+      case KeyValue(key, BytesValue(bytes)) => (key.toByteArray, bytes)
+    }
+  }
   val reapQueue = handler[ReapQueueResponse, Seq[Bytes]] {
     case ReapQueueResponse(NoError(_), values) => values.collect {
       case BytesValue(bytes) => bytes

@@ -99,12 +99,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
       else {
         val h = header(start).copy(endKey = Some(ByteString.copyFrom(to)))
         val req = ScanRequest(header = h, maxResults = batchSize)
-        kv.scanEndpoint(req)
-          .map {
-            case ScanResponse(NoError(_), rows) => rows.collect {
-              case KeyValue(key, BytesValue(bytes)) => (key.toByteArray, bytes)
-            }
-          }
+        kv.scanEndpoint(req).map(ResponseHandlers.scan)
       }
     }
 

@@ -113,7 +113,8 @@ trait BatchClient {
   def increment(key: Bytes, amount: Long): Batch[Long]
   def delete(key: Bytes): Batch[Unit]
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long]
-  // TODO: scan, we can make a simple version (req -> res), but I need to figure out how Spool interacts with batching
+  // Would require a Spool in terms of Batch to allow scanning in batches. So this is just a single scan request
+  def scan(from: Bytes, to: Bytes, maxResults: Long = Long.MaxValue): Batch[Seq[(Bytes, Bytes)]]
   def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit]
   def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]]
   // TODO: endTx, is the transaction on the batch or on individual requests?
@@ -139,18 +140,23 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
         case None => throw new RuntimeException("invalid response type")
       }
   }
+
   def contains(key: Bytes): Batch[Boolean] = {
     batch(ContainsRequest(header = header(key)), _.contains, ResponseHandlers.contains)
   }
+
   def get(key: Bytes): Batch[Option[Bytes]] = {
     batch(GetRequest(header = header(key)), _.get, ResponseHandlers.get)
   }
+
   def put(key: Bytes, value: Bytes): Batch[Unit] = {
     batch(PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value))))), _.put, ResponseHandlers.put)
   }
+
   def put(key: Bytes, value: Long): Batch[Unit] = {
     batch(PutRequest(header = header(key), value = Some(Value(integer = Some(value)))), _.put, ResponseHandlers.put)
   }
+
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Batch[Unit] = {
     val req = ConditionalPutRequest(
       header = header(key),
@@ -159,6 +165,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     )
     batch(req, _.conditionalPut,  ResponseHandlers.cas)
   }
+
   def increment(key: Bytes, amount: Long): Batch[Long] = {
     val req = IncrementRequest(
       header = header(key),
@@ -166,10 +173,12 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     )
     batch(req, _.increment,  ResponseHandlers.increment)
   }
+
   def delete(key: Bytes): Batch[Unit] = {
     val req = DeleteRequest(header = header(key))
     batch(req, _.delete,  ResponseHandlers.delete)
   }
+
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long] = {
     require(maxToDelete >= 0, "maxToDelete must be >= 0")
     require(from <= to, "from should be less or equal to") // TODO: should from be strictly less than to?
@@ -180,10 +189,23 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
       batch(req, _.deleteRange,  ResponseHandlers.deleteRange)
     }
   }
+
+  def scan(from: Bytes, to: Bytes, maxResults: Long): Batch[Seq[(Bytes, Bytes)]] = {
+    require(from <= to, "from should be less or equal to") // TODO: should from be strictly less than to?
+
+    if(from == to) Batch.const(Seq.empty)
+    else {
+      val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
+      val req = ScanRequest(header = h, maxResults = maxResults)
+      batch(req, _.scan, ResponseHandlers.scan)
+    }
+  }
+
   def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit] = {
     val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
     batch(req, _.enqueueMessage,  ResponseHandlers.enqueueMessage)
   }
+
   def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]] = {
     require(maxItems > 0, "maxItems must be > 0")
     val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
