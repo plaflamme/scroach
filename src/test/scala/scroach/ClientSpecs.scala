@@ -71,7 +71,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
   }
 
   def withBatchClient[T](test: BatchClient => Batch[T]) = {
-    val client = BatchClient(HttpKv(cluster()), "root")
+    val client = KvBatchClient(HttpKv(cluster()), "root")
     Await.result {
       client.run(test(client))
     }

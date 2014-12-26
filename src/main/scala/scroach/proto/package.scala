@@ -47,6 +47,7 @@ package object proto {
 
   trait CockroachRequest[M <: MessageLite] {
     val header: RequestHeader
+    def batched: RequestUnion
     def tx(txn: Transaction): M
   }
 
@@ -56,6 +57,7 @@ package object proto {
 
   implicit class RichContainsRequest(req: ContainsRequest) extends CockroachRequest[ContainsRequest] {
     val header = req.header
+    def batched = RequestUnion(contains = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -65,6 +67,7 @@ package object proto {
   }
   implicit class RichGetRequest(req: GetRequest) extends CockroachRequest[GetRequest] {
     val header = req.header
+    def batched = RequestUnion(get = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -74,6 +77,7 @@ package object proto {
   }
   implicit class RichPutRequest(req: PutRequest) extends CockroachRequest[PutRequest] {
     val header = req.header
+    def batched = RequestUnion(put = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -83,6 +87,7 @@ package object proto {
   }
   implicit class RichConditionalPutRequest(req: ConditionalPutRequest) extends CockroachRequest[ConditionalPutRequest] {
     val header = req.header
+    def batched = RequestUnion(conditionalPut = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -92,6 +97,7 @@ package object proto {
   }
   implicit class RichIncrementRequest(req: IncrementRequest) extends CockroachRequest[IncrementRequest] {
     val header = req.header
+    def batched = RequestUnion(increment = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -101,6 +107,7 @@ package object proto {
   }
   implicit class RichDeleteRequest(req: DeleteRequest) extends CockroachRequest[DeleteRequest] {
     val header = req.header
+    def batched = RequestUnion(delete = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -110,6 +117,7 @@ package object proto {
   }
   implicit class RichDeleteRangeRequest(req: DeleteRangeRequest) extends CockroachRequest[DeleteRangeRequest] {
     val header = req.header
+    def batched = RequestUnion(deleteRange = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -119,6 +127,7 @@ package object proto {
   }
   implicit class RichScanRequest(req: ScanRequest) extends CockroachRequest[ScanRequest] {
     val header = req.header
+    def batched = RequestUnion(scan = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -128,6 +137,7 @@ package object proto {
   }
   implicit class RichReapQueueRequest(req: ReapQueueRequest) extends CockroachRequest[ReapQueueRequest] {
     val header = req.header
+    def batched = RequestUnion(reapQueue = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -137,6 +147,7 @@ package object proto {
   }
   implicit class RichEnqueueMessageRequest(req: EnqueueMessageRequest) extends CockroachRequest[EnqueueMessageRequest] {
     val header = req.header
+    def batched = RequestUnion(enqueueMessage = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -146,6 +157,7 @@ package object proto {
   }
   implicit class RichBatchRequest(req: BatchRequest) extends CockroachRequest[BatchRequest] {
     val header = req.header
+    def batched = ???
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
@@ -155,6 +167,7 @@ package object proto {
   }
   implicit class RichEndTransactionRequest(req: EndTransactionRequest) extends CockroachRequest[EndTransactionRequest] {
     val header = req.header
+    def batched = RequestUnion(endTransaction = Some(req))
     def tx(txn: Transaction) = {
       req.copy(header = req.header.copy(txn = Some(txn)))
     }
