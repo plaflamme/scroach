@@ -403,7 +403,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
               case CockroachException(err, _) if(err.transactionRetry.isDefined) => TxRetry
               case CockroachException(err, _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
             }
-            .map { _ -> result }
+            .map { tx: TxResult => tx -> result } // Typing tx as TxResult helps the compiler with the pattern match below
         }
         .flatMap {
           case (TxComplete, result) => Future.const(result)
@@ -412,7 +412,6 @@ case class KvClient(kv: Kv, user: String) extends Client {
             case howlong #:: rest => Future sleep(howlong) before tryTx(rest)
             case _ => Future.exception(new RuntimeException) // This should never happen since the backoff stream is unbounded.
           }
-          case _ => Future.exception(new RuntimeException) // TODO: better error semantics
         }
     }
 
