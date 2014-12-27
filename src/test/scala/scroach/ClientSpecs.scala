@@ -24,7 +24,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
   private[this] object Cluster {
     def stop() {
       new ProcessBuilder("/bin/bash", "local_cluster.sh", "stop")
-        .directory(new java.io.File("src/test/scripts"))
+        .directory(new java.io.File("src/test/scripts").getAbsoluteFile)
         .start().waitFor
     }
     def apply() = {
@@ -49,7 +49,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
 
   private[this] val isntance = new AtomicReference[Cluster]()
 
-  def cluster() = Option(isntance.get).get.endpoint
+  def cluster() = Option(isntance.get).map(_.endpoint).getOrElse(throw new IllegalStateException("no cluster available yet."))
 
   override def beforeAll() {
     isntance.set(Cluster())
