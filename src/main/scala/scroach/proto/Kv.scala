@@ -35,22 +35,31 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
 
   private[this] val tx = new AtomicReference[Transaction](Transaction(name = Some(name), isolation = Some(isolation)))
 
-  private[this] def merge(old: Transaction, niu: Transaction): Transaction = {
-    if(old.id.isEmpty) niu
-    else {
-      val builder = old.toBuilder
-      if(niu.status.map(_ != TransactionStatus.PENDING).getOrElse(false))
-        builder.setStatus(niu.status.get)
-      if(old.`epoch`.isEmpty || old.`epoch`.get < niu.`epoch`.get)
-        builder.setEpoch(niu.`epoch`.get)
-      if(old.timestamp.isEmpty || old.timestamp.get < niu.timestamp.get)
-        builder.setTimestamp(niu.timestamp.get)
-      if(old.origTimestamp.isEmpty || old.origTimestamp.get < niu.origTimestamp.get)
-        builder.setOrigTimestamp(niu.origTimestamp.get)
-      builder.setMaxTimestamp(niu.maxTimestamp.get)
-      builder.setCertainNodes(niu.certainNodes.get)
-      builder.setPriority(math.max(old.priority.getOrElse(0), niu.priority.get))
-      builder.build
+  private[this] def merge(niu: Transaction) = synchronized {
+    val old = tx.get
+    tx.set {
+      if(old.id.isEmpty) niu
+      else {
+        val builder = old.toBuilder
+
+        if(niu.status.map(_ != TransactionStatus.PENDING).getOrElse(false))
+          builder.setStatus(niu.status.get)
+
+        if(old.epoch.isEmpty || old.epoch.get < niu.epoch.get)
+          builder.setEpoch(niu.epoch.get)
+
+        if(old.timestamp.isEmpty || old.timestamp.get < niu.timestamp.get)
+          builder.setTimestamp(niu.timestamp.get)
+
+        if(old.origTimestamp.isEmpty || old.origTimestamp.get < niu.origTimestamp.get)
+          builder.setOrigTimestamp(niu.origTimestamp.get)
+
+        builder
+          .setMaxTimestamp(niu.maxTimestamp.get)
+          .setCertainNodes(niu.certainNodes.get)
+          .setPriority(math.max(old.priority.getOrElse(Int.MinValue), niu.priority.get))
+          .build
+      }
     }
   }
 
@@ -62,7 +71,7 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
             case ResponseHeader(Some(err), _, Some(txn)) if(err.transactionAborted.isDefined) => {
               tx.set(Transaction(name = Some(name), isolation = Some(isolation), priority = txn.priority))
             }
-            case ResponseHeader(_, _, Some(niu)) => tx.set(merge(tx.get, niu))
+            case ResponseHeader(_, _, Some(niu)) => merge(niu)
             case _ => ()
           }
           response

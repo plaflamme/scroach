@@ -59,7 +59,7 @@ message ReadWithinUncertaintyIntervalError {
 // A TransactionAbortedError indicates that the transaction was
 // aborted by another concurrent transaction.
 message TransactionAbortedError {
-  optional Transaction txn = 1 [(gogoproto.nullable) = false];
+  required Transaction txn = 1 [(gogoproto.nullable) = false];
 }
 
 // A TransactionPushError indicates that the transaction could not
@@ -76,7 +76,7 @@ message TransactionPushError {
 // retried, usually with an increased transaction timestamp. The
 // transaction struct to use is returned with the error.
 message TransactionRetryError {
-  optional Transaction txn = 1 [(gogoproto.nullable) = false];
+  required Transaction txn = 1 [(gogoproto.nullable) = false];
 }
 
 // A TransactionStatusError indicates that the transaction status is
