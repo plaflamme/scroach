@@ -301,4 +301,23 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
       }
   }
 
+  it should "handle transactions in" in withClient { client =>
+    val k = randomBytes
+    client.tx() { kv =>
+      val batchClient = KvBatchClient(kv, "root")
+
+      val batch = batchClient
+        .put(k, randomBytes)
+        .flatMap { _ =>
+          batchClient.get(k)
+        }
+        .map { got =>
+          throw new RuntimeException("doh!")
+        }
+      batchClient.run(batch)
+    }.liftToTry.unit before client.get(k).foreach { got =>
+      got should be ('empty)
+    }
+  }
+
 }
