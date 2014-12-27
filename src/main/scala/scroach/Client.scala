@@ -63,11 +63,7 @@ case class KvClient(kv: Kv, user: String) extends Client {
       expValue = previous.map(p => Value(bytes = Some(ByteString.copyFrom(p)))),
       value = Value(bytes = value.map(ByteString.copyFrom(_)))
     )
-    kv.casEndpoint(req)
-      .handle {
-        case CockroachException(err, ConditionalPutResponse(_, actual)) => throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
-      }
-      .unit
+    kv.casEndpoint(req).map { ResponseHandlers.cas }
   }
 
   def increment(key: Bytes, amount: Long): Future[Long] = {
@@ -146,10 +142,8 @@ case class KvClient(kv: Kv, user: String) extends Client {
           txKv.endTxEndpoint(endRequest)
             .map {
               case EndTransactionResponse(NoError(_), _) => TxComplete
-            }
-            .handle {
-              case CockroachException(err, _) if(err.transactionRetry.isDefined) => TxRetry
-              case CockroachException(err, _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
+              case EndTransactionResponse(HasError(err), _) if(err.transactionRetry.isDefined) => TxRetry
+              case EndTransactionResponse(HasError(err), _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
             }
             .map { tx: TxResult => tx -> result } // Typing tx as TxResult helps the compiler with the pattern match below
         }

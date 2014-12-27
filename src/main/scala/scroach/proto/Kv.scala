@@ -112,12 +112,6 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
         .map { response =>
           parse(response.content)
         }
-        .map { proto =>
-          proto.header match {
-            case HasError(err) => throw CockroachException(err, proto)
-            case _ => proto
-          }
-        }
     }
   }
   val containsEndpoint = newEndpoint[ContainsRequest, ContainsResponse]("Contains", ContainsResponse.parseFrom)
