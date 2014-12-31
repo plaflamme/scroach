@@ -4,6 +4,8 @@ lazy val main = project.in(file(".")).configs(ScalaBuff)
 
 scalabuffSettings
 
+resolvers += bintray.Opts.resolver.mavenRepo("plaflamme")
+
 libraryDependencies ++= Seq(
   "com.twitter" %% "finagle-httpx" % "6.24.0",
   "org.scalatest" %% "scalatest" % "2.2.2" % "test",
