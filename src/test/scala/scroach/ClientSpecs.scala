@@ -201,6 +201,20 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     }
   }
 
+  it should "scan in batches" in withClient { client =>
+    val keys = for(i <- 0 until 100) yield {
+      f"$i%03d".getBytes(Charsets.Utf8)
+    }
+
+    for {
+      _ <- Future.collect(keys.map(k => client.put(k, randomBytes)).toSeq)
+      scanner <- client.scan(keys.head, keys.last.next, 10)
+      result <- scanner.foldLeft(0) { case(b, (key, value)) => b + 1}
+    } yield {
+      result should be (100)
+    }
+  }
+
   it should "abort tx on failure" in withClient { client =>
     val key = randomBytes
 

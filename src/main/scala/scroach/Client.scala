@@ -90,27 +90,28 @@ case class KvClient(kv: Kv, user: String) extends Client {
   def scan(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Bytes)]] = {
     require(batchSize > 0, "batchSize must be > 0")
 
-    def scanBatch(start: Bytes): Future[Seq[(Bytes, Bytes)]] = {
-      if(from >= to) Future.value(Seq.empty) // short-circuit
+    // TODO: lazy scan
+    val spool = new SpoolSource[(Bytes, Bytes)]()
+    def scanBatch(start: Bytes): Future[Unit] = {
+      val scan = if(from >= to) Future.value(Seq.empty)
       else {
         val h = header(start).copy(endKey = Some(ByteString.copyFrom(to)))
         val req = ScanRequest(header = h, maxResults = batchSize)
         kv.scanEndpoint(req).map(ResponseHandlers.scan)
       }
-    }
-
-    // TODO: lazy scan
-    val spool = new SpoolSource[(Bytes, Bytes)]()
-    scanBatch(from)
-      .flatMap { values =>
-      if(values.nonEmpty) {
-        values.map(spool.offer(_))
-        scanBatch(values.last._1.next)
-      } else {
-        spool.close()
-        Future.Done
+      scan.flatMap { values =>
+        println(values.size)
+        if(values.nonEmpty) {
+          values.map(spool.offer(_))
+          scanBatch(values.last._1.next)
+        } else {
+          spool.close()
+          Future.Done
+        }
       }
     }
+
+    scanBatch(from)
     spool()
   }
 
