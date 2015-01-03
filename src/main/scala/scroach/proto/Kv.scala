@@ -138,6 +138,6 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
 
   private[this] def newEndpoint[Req <: MessageLite, Res <: MessageLite <% CockroachResponse[Res]](name: String, parseFrom: (InputStream) => Res): Service[Req, Res] = {
     // TODO: retrying semantics for 429 and possibly 500s
-    LoggingFilter[Req, Res] andThen ProtobufFilter[Req, Res](name, parseFrom) andThen client
+    /* LoggingFilter[Req, Res] andThen */ ProtobufFilter[Req, Res](name, parseFrom) andThen client
   }
 }
