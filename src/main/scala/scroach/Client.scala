@@ -100,7 +100,6 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
         kv.scanEndpoint(req).map(ResponseHandlers.scan)
       }
       scan.flatMap { values =>
-        println(values.size)
         if(values.nonEmpty) {
           values.map(spool.offer(_))
           scanBatch(values.last._1.next)
