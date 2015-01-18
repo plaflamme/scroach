@@ -2,8 +2,8 @@ package scroach
 
 import com.twitter.finagle.Httpx
 import com.twitter.io.Charsets
-import com.twitter.util.{Future, Await}
-import scroach.proto.{IsolationType, HttpKv}
+import com.twitter.util.{Promise, Future, Await}
+import scroach.proto.{WriteIntentError, CockroachException, IsolationType, HttpKv}
 
 import scala.collection.JavaConverters._
 import java.io.InputStreamReader
@@ -47,22 +47,28 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
     }
   }
 
-  private[this] val isntance = new AtomicReference[Cluster]()
+  private[this] val instance = new AtomicReference[Cluster]()
 
-  def cluster() = Option(isntance.get).map(_.endpoint).getOrElse(throw new IllegalStateException("no cluster available yet."))
+  def cluster() = Option(instance.get).map(_.endpoint).getOrElse(throw new IllegalStateException("no cluster available yet."))
 
   override def beforeAll() {
-    isntance.set(Cluster())
+    instance.set(Cluster())
   }
 
   override def afterAll() {
-    Option(isntance.get()).foreach(_.stop())
+    Option(instance.get()).foreach(_.stop())
   }
 }
 
 class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
 
   def randomBytes = util.Random.alphanumeric.take(20).map(_.toByte).toArray
+
+  def withKv(test: proto.Kv => Future[Any]) = {
+    Await.result {
+      test(HttpKv(cluster()))
+    }
+  }
 
   def withClient(test: Client => Future[Any]) = {
     Await.result {
@@ -228,6 +234,82 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     } yield {
       got should be ('empty)
     }
+  }
+
+  it should "retry txn on write/write and read/write conflicts or fail txn when it cannot push" in withKv { kv =>
+
+    sealed trait Method
+    case object Put extends Method
+    case object Get extends Method
+
+    case class TestCase(method: Method, isolation: IsolationType.EnumVal, canPush: Boolean, expectAttempts: Int)
+
+    def run(test: TestCase) = {
+      val key = randomBytes
+      val txValue = "tx-value".getBytes
+      val nonTxValue = "value".getBytes
+
+      val txPriority = if (test.canPush) -1 else -2
+      val nonTxPriority = if (test.canPush) -2 else -1
+
+      val client = KvClient(kv, "root", Some(nonTxPriority))
+
+      val nonTxDone = new Promise[Unit]
+
+      def retryConflict(value: Bytes): Future[Unit] = {
+        val conflict = test.method match {
+          case Put => client.put(key, value)
+          case Get => client.get(key).unit
+        }
+
+        conflict rescue {
+          case CockroachException(e, _) if (e.`writeIntent`.isDefined) => retryConflict(value)
+        }
+      }
+
+      var count = 0
+      val runTx = client.tx(test.isolation) { txKv =>
+        val txClient = KvClient(txKv, "root", Some(txPriority))
+        count += 1
+
+        txClient
+          .put(key, txValue)
+          .foreach { _ =>
+            if(count == 1) retryConflict(nonTxValue) ensure { nonTxDone.setDone }
+          }
+      }
+
+      for {
+        _ <- runTx
+        _ <- nonTxDone
+        got <- client.get(key)
+      } yield {
+        if (test.canPush) {
+          got should be('defined)
+          got.get should equal(txValue)
+        } else {
+          got should be('defined)
+          got.get should equal(nonTxValue)
+        }
+        count should be (test.expectAttempts)
+      }
+    }
+
+    Future.collect {
+      Seq(
+        // write/write conflicts
+        TestCase(Put, IsolationType.SNAPSHOT, true, 2),
+        TestCase(Put, IsolationType.SERIALIZABLE, true, 2),
+        TestCase(Put, IsolationType.SNAPSHOT, false, 1),
+        TestCase(Put, IsolationType.SERIALIZABLE, false, 1),
+        // read/write conflicts
+        TestCase(Get, IsolationType.SNAPSHOT, true, 1),
+        TestCase(Get, IsolationType.SERIALIZABLE, true, 2),
+        TestCase(Get, IsolationType.SNAPSHOT, false, 1),
+        TestCase(Get, IsolationType.SERIALIZABLE, false, 1)
+      ) map(run)
+    }
+
   }
 
   it should "handle snapshot isolation" in withClient { client =>
