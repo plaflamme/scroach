@@ -24,13 +24,13 @@ trait Client {
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T]
 }
 
-case class KvClient(kv: Kv, user: String) extends Client {
+case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends Client {
   private[this] val someUser = Some(user)
-  private[this] def header() = {
-    RequestHeader(user = someUser)
+  private[this] def header(): RequestHeader = {
+    RequestHeader(user = someUser, userPriority = priority)
   }
-  private[this] def header(key: Bytes) = {
-    RequestHeader(user = someUser, key = Option(key).map(ByteString.copyFrom(_)))
+  private[this] def header(key: Bytes): RequestHeader = {
+    header().copy(key = Option(key).map(ByteString.copyFrom(_)))
   }
 
   def contains(key: Bytes): Future[Boolean] = {
@@ -139,6 +139,8 @@ case class KvClient(kv: Kv, user: String) extends Client {
         }
         .liftToTry
         .flatMap { result =>
+          // TODO: this has the wrong header. It needs to use the header of the KvClient inside the tx.
+          // We may need to change the signature of tx to take a Client => Future[T] so we can control this
           val endRequest = EndTransactionRequest(header = header(), commit = Some(result.isReturn))
           txKv.endTxEndpoint(endRequest)
             .map {
