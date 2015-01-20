@@ -40,19 +40,19 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
     tx.set {
       if(old.id.isEmpty) niu
       else {
-        val builder = old.toBuilder
+        var builder = old.toBuilder
 
         if(niu.status.map(_ != TransactionStatus.PENDING).getOrElse(false))
-          builder.setStatus(niu.status.get)
+          builder = builder.setStatus(niu.status.get)
 
         if(old.epoch.isEmpty || old.epoch.get < niu.epoch.get)
-          builder.setEpoch(niu.epoch.get)
+          builder = builder.setEpoch(niu.epoch.get)
 
         if(old.timestamp.isEmpty || old.timestamp.get < niu.timestamp.get)
-          builder.setTimestamp(niu.timestamp.get)
+          builder = builder.setTimestamp(niu.timestamp.get)
 
         if(old.origTimestamp.isEmpty || old.origTimestamp.get < niu.origTimestamp.get)
-          builder.setOrigTimestamp(niu.origTimestamp.get)
+          builder = builder.setOrigTimestamp(niu.origTimestamp.get)
 
         builder
           .setMaxTimestamp(niu.maxTimestamp.get)
