@@ -9,7 +9,7 @@ import scroach.proto._
 
 // TODO: handle bytes vs. counter values. For example get for a counter would return Future[Long]
 // TODO: handle timestamps. Potentially wrap Value into a a union?
-trait Client {
+trait BaseClient {
   def contains(key: Bytes): Future[Boolean]
   def get(key: Bytes): Future[Option[Bytes]]
   def put(key: Bytes, value: Bytes): Future[Unit]
@@ -21,7 +21,11 @@ trait Client {
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
   def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
   def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
-  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T]
+  def batched: BatchClient
+}
+trait TxClient extends BaseClient
+trait Client extends BaseClient {
+  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE, user: Option[String] = None, priority: Option[Int] = None)(f: TxClient => Future[T]): Future[T]
 }
 
 case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends Client {
@@ -128,11 +132,12 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
   // Exponential backoff from 50.ms to 3600.ms then constant 5.seconds
   private[this] val DefaultBackoffs = Backoff.exponential(50.milliseconds, 2).take(6) ++ Backoff.const(5.seconds)
 
-  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T] = {
+  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE, txUser: Option[String] = None, priority: Option[Int] = priority)(f: TxClient => Future[T]): Future[T] = {
     val txKv = TxKv(kv, isolation = isolation)
+    val txClient = new KvClient(txKv, txUser getOrElse user, priority) with TxClient
 
     def tryTx(backoffs: Stream[Duration]): Future[T] = {
-      f(txKv)
+      f(txClient)
         .rescue {
           case CockroachException(err, _) if(err.readWithinUncertaintyInterval.isDefined) => tryTx(DefaultBackoffs)
         }
@@ -140,8 +145,9 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
         .flatMap { result =>
           // TODO: this has the wrong header. It needs to use the header of the KvClient inside the tx.
           // We may need to change the signature of tx to take a Client => Future[T] so we can control this
-          val endRequest = EndTransactionRequest(header = header(), commit = Some(result.isReturn))
-          txKv.endTxEndpoint(endRequest)
+          val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
+          val endTxRequest = EndTransactionRequest(header = header, commit = Some(result.isReturn))
+          txKv.endTxEndpoint(endTxRequest)
             .map {
               case EndTransactionResponse(NoError(_), _) => TxComplete
               case EndTransactionResponse(HasError(err), _) if(err.transactionRetry.isDefined) => TxRetry
@@ -161,4 +167,6 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
 
     tryTx(DefaultBackoffs)
   }
+
+  def batched = KvBatchClient(kv, user)
 }

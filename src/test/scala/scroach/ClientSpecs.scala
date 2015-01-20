@@ -225,10 +225,8 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     val key = randomBytes
 
     for {
-      tx <- client.tx() { kv =>
-        val txClient = KvClient(kv, "root")
-        txClient.put(key, randomBytes)
-          .map { _ => throw new RuntimeException("doh!") }
+      tx <- client.tx() { txClient =>
+        txClient.put(key, randomBytes).map { _ => throw new RuntimeException("doh!") }
       }.liftToTry
       got <- client.get(key)
     } yield {
@@ -254,42 +252,45 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
 
       val client = KvClient(kv, "root", Some(nonTxPriority))
 
-      val nonTxDone = new Promise[Unit]
+      val conflictDone = new Promise[Unit]
 
-      def retryConflict(value: Bytes): Future[Unit] = {
+      def createConflict(): Future[Unit] = {
         val conflict = test.method match {
-          case Put => client.put(key, value)
+          case Put => client.put(key, nonTxValue)
           case Get => client.get(key).unit
         }
 
         conflict rescue {
-          case CockroachException(e, _) if (e.`writeIntent`.isDefined) => retryConflict(value)
+          case CockroachException(e, _) if (e.`writeIntent`.isDefined) => createConflict()
         }
       }
 
       var count = 0
-      val runTx = client.tx(test.isolation) { txKv =>
-        val txClient = KvClient(txKv, "root", Some(txPriority))
+      val runTx = client.tx(test.isolation, priority = Some(txPriority)) { txClient =>
         count += 1
 
         txClient
           .put(key, txValue)
-          .foreach { _ =>
-            if(count == 1) retryConflict(nonTxValue) ensure { nonTxDone.setDone }
+          .map { _ =>
+            if(count == 1) createConflict ensure { conflictDone.setDone } else Future.Done
+          }
+          .flatMap { _ =>
+            import com.twitter.conversions.time._
+            Future.sleep(150.milliseconds)
           }
       }
 
       for {
         _ <- runTx
-        _ <- nonTxDone
+        _ <- conflictDone
         got <- client.get(key)
       } yield {
-        if (test.canPush) {
+        if (test.canPush || test.method == Get) {
           got should be('defined)
-          got.get should equal(txValue)
+          got.map(new String(_)).get should equal(new String(txValue))
         } else {
           got should be('defined)
-          got.get should equal(nonTxValue)
+          got.map(new String(_)).get should equal(new String(nonTxValue))
         }
         count should be (test.expectAttempts)
       }
@@ -316,8 +317,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     val key = randomBytes
     val value = randomBytes
     for {
-      _ <- client.tx(IsolationType.SNAPSHOT) { kv =>
-        val txClient = KvClient(kv, "root")
+      _ <- client.tx(IsolationType.SNAPSHOT) { txClient =>
         for {
           _ <- txClient.put(key, value)
           inner <- txClient.get(key)
@@ -340,8 +340,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
 
     // Reads value at o, appends to v if it exists and writes to k
     def readWrite(k: Bytes, o: Bytes, v: Bytes) = {
-      client.tx() { kv =>
-        val txClient = KvClient(kv, "root")
+      client.tx() { txClient =>
         for {
           vo <- txClient.get(o)
           write = v ++ vo.getOrElse(Array.empty)
@@ -399,8 +398,8 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
 
   it should "handle transactions in" in withClient { client =>
     val k = randomBytes
-    client.tx() { kv =>
-      val batchClient = KvBatchClient(kv, "root")
+    client.tx() { txClient =>
+      val batchClient = txClient.batched
 
       val batch = batchClient
         .put(k, randomBytes)
