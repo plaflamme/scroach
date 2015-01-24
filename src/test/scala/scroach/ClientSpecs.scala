@@ -11,7 +11,7 @@ import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicReference
 
 import com.google.common.io.CharStreams
-import org.scalatest.{Matchers, FlatSpec, Suite, BeforeAndAfterAll}
+import org.scalatest.{Suite, BeforeAndAfterAll}
 
 trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
 
@@ -61,9 +61,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
   }
 }
 
-class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
-
-  def randomBytes = util.Random.alphanumeric.take(20).map(_.toByte).toArray
+class ClientSpec extends ScroachSpec with CockroachCluster {
 
   def withKv(test: proto.Kv => Future[Any]) = {
     Await.result {
