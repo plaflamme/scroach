@@ -3,7 +3,8 @@ package scroach
 import com.twitter.finagle.Httpx
 import com.twitter.io.Charsets
 import com.twitter.util.{Promise, Future, Await}
-import scroach.proto.{WriteIntentError, CockroachException, IsolationType, HttpKv}
+import com.twitter.conversions.time._
+import scroach.proto.{CockroachException, IsolationType, HttpKv}
 
 import scala.collection.JavaConverters._
 import java.io.InputStreamReader
@@ -271,12 +272,11 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
 
         txClient
           .put(key, txValue)
-          .map { _ =>
-            if(count == 1) createConflict ensure { conflictDone.setDone } else Future.Done
-          }
           .flatMap { _ =>
-            import com.twitter.conversions.time._
-            Future.sleep(150.milliseconds)
+            if(count == 1) {
+              createConflict ensure { conflictDone.setDone }
+              Future.sleep(150.milliseconds)
+            } else Future.Done
           }
       }
 
