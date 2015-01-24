@@ -396,7 +396,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
       }
   }
 
-  it should "handle transactions in" in withClient { client =>
+  it should "handle transactions" in withClient { client =>
     val k = randomBytes
     client.tx() { txClient =>
       val batchClient = txClient.batched
