@@ -35,30 +35,25 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
 
   private[this] val tx = new AtomicReference[Transaction](Transaction(name = Some(name), isolation = Some(isolation)))
 
+  private[this] def max[T <% Ordered[T]](l: Option[T], r: Option[T]) = {
+    import scala.math.Ordering.Implicits._
+    if(l > r) l else r
+  }
+
   private[this] def merge(niu: Transaction) = synchronized {
     val old = tx.get
     tx.set {
       if(old.id.isEmpty) niu
       else {
-        var builder = old.toBuilder
-
-        if(niu.status.map(_ != TransactionStatus.PENDING).getOrElse(false))
-          builder = builder.setStatus(niu.status.get)
-
-        if(old.epoch.isEmpty || old.epoch.get < niu.epoch.get)
-          builder = builder.setEpoch(niu.epoch.get)
-
-        if(old.timestamp.isEmpty || old.timestamp.get < niu.timestamp.get)
-          builder = builder.setTimestamp(niu.timestamp.get)
-
-        if(old.origTimestamp.isEmpty || old.origTimestamp.get < niu.origTimestamp.get)
-          builder = builder.setOrigTimestamp(niu.origTimestamp.get)
-
-        builder
-          .setMaxTimestamp(niu.maxTimestamp.get)
-          .setCertainNodes(niu.certainNodes.get)
-          .setPriority(math.max(old.priority.getOrElse(Int.MinValue), niu.priority.get))
-          .build
+        old.copy(
+          timestamp = max(old.timestamp, niu.timestamp),
+          origTimestamp = max(old.origTimestamp, niu.origTimestamp),
+          epoch = max(old.epoch, niu.epoch),
+          priority = max(old.priority, niu.priority),
+          status = niu.status.filter(_ != TransactionStatus.PENDING) orElse old.status,
+          maxTimestamp = niu.maxTimestamp,
+          certainNodes = niu.certainNodes
+        )
       }
     }
   }
