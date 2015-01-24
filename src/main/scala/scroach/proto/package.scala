@@ -44,6 +44,14 @@ package object proto {
       }
     }
   }
+  object ConditionFailed {
+    def unapply(h: ResponseHeader) = {
+      h match {
+        case ResponseHeader(Some(err), _, _) if(err.conditionFailed.isDefined) => err.conditionFailed
+        case _ => None
+      }
+    }
+  }
 
   trait CockroachRequest[M <: MessageLite] {
     val header: RequestHeader

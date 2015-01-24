@@ -29,8 +29,8 @@ private[scroach] object ResponseHandlers {
   }
   val put = noOpHandler[PutResponse]
   val cas: ConditionalPutResponse => Unit = {
-    case ConditionalPutResponse(HasError(err), Some(actual)) => throw ConditionFailedException(actual.bytes.map(_.toByteArray))
-    case res@ConditionalPutResponse(HasError(err), None) => throw CockroachException(err, res)
+    case ConditionalPutResponse(ConditionFailed(ConditionFailedError(actual))) => throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
+    case res@ConditionalPutResponse(HasError(err)) => throw CockroachException(err, res)
     case _ => ()
   }
   val increment = handler[IncrementResponse, Long] {

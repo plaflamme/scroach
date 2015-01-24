@@ -175,7 +175,7 @@ class ClientSpec extends FlatSpec with CockroachCluster with Matchers {
     }
   }
 
-  ignore should "fail when compare fails" in withClient { client =>
+  it should "fail when compare fails" in withClient { client =>
     val key = randomBytes
     val first = randomBytes
     val second = randomBytes
