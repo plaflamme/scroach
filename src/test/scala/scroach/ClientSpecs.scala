@@ -59,9 +59,6 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
   override def afterAll() {
     Option(instance.get()).foreach(_.stop())
   }
-}
-
-class ClientSpec extends ScroachSpec with CockroachCluster {
 
   def withKv(test: proto.Kv => Future[Any]) = {
     Await.result {
@@ -81,6 +78,9 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       client.run(test(client))
     }
   }
+}
+
+class ClientSpec extends ScroachSpec with CockroachCluster {
 
   "A Client" should "read None when value not present" in withClient { client =>
     val key = randomBytes
