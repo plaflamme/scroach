@@ -9,4 +9,4 @@ fi
 
 cd $CLONE_DIR && git reset --hard 943eeb7534a66d5a2d6ace238738699ab9b5264e && cd -
 
-rsync -vv -a --delete $CLONE_DIR/cockroach/proto/ src/main/protobuf/
+rsync -vv -a --delete $CLONE_DIR/ src/main/protobuf/

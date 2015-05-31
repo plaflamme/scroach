@@ -1,8 +1,8 @@
 package scroach
 
+import cockroach.proto.IsolationType
 import com.twitter.io.Charsets
 import com.twitter.util._
-import proto.IsolationType
 
 class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
@@ -13,7 +13,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   val OnlySerializable = Seq(SSI)
   val OnlySnapshot = Seq(SI)
 
-  def enumIsolations(numTx: Int, isolations: Seq[IsolationType.EnumVal]): Seq[Seq[IsolationType.EnumVal]] = {
+  def enumIsolations(numTx: Int, isolations: Seq[IsolationType]): Seq[Seq[IsolationType]] = {
     for(i <- 0 until math.pow(isolations.size, numTx).toInt) yield {
       var v = i
       for (t <- 0 until numTx) yield {
@@ -109,7 +109,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
       }.toSeq
     }
 
-    def run(client: Client, priorities: Seq[Int], isolations: Seq[IsolationType.EnumVal]) = {
+    def run(client: Client, priorities: Seq[Int], isolations: Seq[IsolationType]) = {
 
       case class Ex(cmd: Command, previous: Option[Ex], done: Promise[Unit])
 
@@ -121,7 +121,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
           e
         }
 
-      case class Tx(idx: Int, priority: Int, isolation: IsolationType.EnumVal, cmds: Seq[Ex])
+      case class Tx(idx: Int, priority: Int, isolation: IsolationType, cmds: Seq[Ex])
 
       val txs = for(i <- 0 until priorities.size) yield {
         Tx(i+1, priorities(i), isolations(i), plan.filter(_.cmd.txIdx == i+1))
@@ -202,7 +202,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val tx1 = "R(A) R(B) SUM(C) C"
     val tx2 = "I(A) I(B) C"
 
-    def check(isolationLevels: Seq[IsolationType.EnumVal], txs: Seq[String], f: () => Future[Unit]) = {
+    def check(isolationLevels: Seq[IsolationType], txs: Seq[String], f: () => Future[Unit]) = {
 
       val priorities = (for(i <- 1 to txs.size) yield i).permutations.toSeq
       val isolations = enumIsolations(txs.size, isolationLevels)

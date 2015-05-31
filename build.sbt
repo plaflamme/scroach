@@ -1,8 +1,15 @@
+import com.trueaccord.scalapb.{ScalaPbPlugin => PB}
+
 name := "scroach"
 
-lazy val main = project.in(file(".")).configs(ScalaBuff)
+PB.protobufSettings
 
-scalabuffSettings
+PB.runProtoc in PB.protobufConfig := (args =>
+  com.github.os72.protocjar.Protoc.runProtoc("-v261" +: args.toArray))
+
+PB.flatPackage in PB.protobufConfig := true
+
+lazy val main = project.in(file("."))
 
 resolvers += bintray.Opts.resolver.mavenRepo("plaflamme")
 

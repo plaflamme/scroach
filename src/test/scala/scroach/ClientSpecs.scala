@@ -4,7 +4,8 @@ import com.twitter.finagle.Httpx
 import com.twitter.io.Charsets
 import com.twitter.util.{Promise, Future, Await}
 import com.twitter.conversions.time._
-import scroach.proto.{CockroachException, IsolationType, HttpKv}
+import scroach.proto.{CockroachException, HttpKv}
+import cockroach.proto._
 
 import scala.collection.JavaConverters._
 import java.io.InputStreamReader
@@ -239,7 +240,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     case object Put extends Method
     case object Get extends Method
 
-    case class TestCase(method: Method, isolation: IsolationType.EnumVal, canPush: Boolean, expectAttempts: Int)
+    case class TestCase(method: Method, isolation: IsolationType, canPush: Boolean, expectAttempts: Int)
 
     def run(test: TestCase) = {
       val key = randomBytes
@@ -260,7 +261,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
         }
 
         conflict rescue {
-          case CockroachException(e, _) if (e.`writeIntent`.isDefined) => createConflict()
+          case CockroachException(e, _) if (e.getDetail.value.`writeIntent`.isDefined) => createConflict()
         }
       }
 

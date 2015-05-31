@@ -56,7 +56,7 @@ message Timestamp {
 //  basic types: a "bag o' bytes" generic byte slice and an incrementable
 //  int64, for use with the Increment API call.
 message Value {
-   oneof value {
+   oneof valiu {
     // Bytes is the byte slice value.
     bytes bytes = 1;
     // Integer is an integer value type. Only Integer values may exist at a key
@@ -91,7 +91,7 @@ message MVCCValue {
 // KeyValue is a pair of Key and Value for returned Key/Value pairs
 //  from ScanRequest/ScanResponse. It embeds a Key and a Value.
 message KeyValue {
-  optional bytes key = 1;
+  required bytes key = 1;
   optional .cockroach.proto.Value value = 2;
 }
 

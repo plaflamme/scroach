@@ -1,8 +1,10 @@
 package scroach
 
+import com.trueaccord.scalapb.GeneratedMessage
+import scroach.proto._
 import com.google.protobuf.{MessageLite, ByteString}
 import com.twitter.util.{Throw, Return, Try, Future}
-import scroach.proto._
+import cockroach.proto._
 
 sealed trait Batch[+A] {
 
@@ -115,8 +117,8 @@ trait BatchClient {
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long]
   // Would require a Spool in terms of Batch to allow scanning in batches. So this is just a single scan request
   def scan(from: Bytes, to: Bytes, maxResults: Long = Long.MaxValue): Batch[Seq[(Bytes, Bytes)]]
-  def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit]
-  def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]]
+//  def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit]
+//  def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]]
   // TODO: endTx, is the transaction on the batch or on individual requests?
   // If it's on the batch, then constructing a BatchClient with a TxKv would "just work"
   // If it's on individual requests, then that's a lot more complicated since we would need to replay portions of batches to handle tx retries.
@@ -132,7 +134,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
   private[this] def header(key: Bytes) = {
     RequestHeader(user = someUser, key = Option(key).map(ByteString.copyFrom(_)))
   }
-  private[this] def batch[Req <: MessageLite, Res, R](req: CockroachRequest[Req], ex: ResponseUnion => Option[Res], handler: Res => R) = {
+  private[this] def batch[Req <: GeneratedMessage, Res, R](req: CockroachRequest[Req], ex: ResponseUnion => Option[Res], handler: Res => R) = {
     Batch.single(req.batched)
       .map { ex(_) }
       .map {
@@ -142,41 +144,41 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
   }
 
   def contains(key: Bytes): Batch[Boolean] = {
-    batch(ContainsRequest(header = header(key)), _.contains, ResponseHandlers.contains)
+    batch(ContainsRequest(header = header(key)), _.value.contains, ResponseHandlers.contains)
   }
 
   def get(key: Bytes): Batch[Option[Bytes]] = {
-    batch(GetRequest(header = header(key)), _.get, ResponseHandlers.get)
+    batch(GetRequest(header = header(key)), _.value.get, ResponseHandlers.get)
   }
 
   def put(key: Bytes, value: Bytes): Batch[Unit] = {
-    batch(PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value))))), _.put, ResponseHandlers.put)
+    batch(PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(value))))), _.value.put, ResponseHandlers.put)
   }
 
   def put(key: Bytes, value: Long): Batch[Unit] = {
-    batch(PutRequest(header = header(key), value = Some(Value(integer = Some(value)))), _.put, ResponseHandlers.put)
+    batch(PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Integer(value)))), _.value.put, ResponseHandlers.put)
   }
 
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Batch[Unit] = {
     val req = ConditionalPutRequest(
       header = header(key),
-      expValue = previous.map(p => Value(bytes = Some(ByteString.copyFrom(p)))),
-      value = Value(bytes = value.map(ByteString.copyFrom(_)))
+      expValue = previous.map(p => Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(p)))),
+      value = Some(Value(valiu = value.map(v => Value.Valiu.Bytes(ByteString.copyFrom(v))).getOrElse(Value.Valiu.Empty)))
     )
-    batch(req, _.conditionalPut,  ResponseHandlers.cas)
+    batch(req, _.value.conditionalPut,  ResponseHandlers.cas)
   }
 
   def increment(key: Bytes, amount: Long): Batch[Long] = {
     val req = IncrementRequest(
       header = header(key),
-      increment = amount
+      increment = Some(amount)
     )
-    batch(req, _.increment,  ResponseHandlers.increment)
+    batch(req, _.value.increment,  ResponseHandlers.increment)
   }
 
   def delete(key: Bytes): Batch[Unit] = {
     val req = DeleteRequest(header = header(key))
-    batch(req, _.delete,  ResponseHandlers.delete)
+    batch(req, _.value.delete,  ResponseHandlers.delete)
   }
 
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long] = {
@@ -185,8 +187,8 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     if(maxToDelete == 0) Batch.const(0) // short-circuit
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
-      val req = DeleteRangeRequest(header = h, maxEntriesToDelete = maxToDelete)
-      batch(req, _.deleteRange,  ResponseHandlers.deleteRange)
+      val req = DeleteRangeRequest(header = h, maxEntriesToDelete = Some(maxToDelete))
+      batch(req, _.value.deleteRange,  ResponseHandlers.deleteRange)
     }
   }
 
@@ -196,11 +198,11 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     if(from == to) Batch.const(Seq.empty)
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
-      val req = ScanRequest(header = h, maxResults = maxResults)
-      batch(req, _.scan, ResponseHandlers.scan)
+      val req = ScanRequest(header = h, maxResults = Some(maxResults))
+      batch(req, _.value.scan, ResponseHandlers.scan)
     }
   }
-
+/*
   def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit] = {
     val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
     batch(req, _.enqueueMessage,  ResponseHandlers.enqueueMessage)
@@ -211,7 +213,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
     batch(req, _.reapQueue,  ResponseHandlers.reapQueue)
   }
-
+*/
   def run[A](batch: Batch[A]): Future[A] = {
     batch.run { input =>
       if(input.isEmpty) Future.value(Seq.empty)

@@ -3,33 +3,34 @@ package scroach
 import java.net.InetSocketAddress
 
 import com.google.protobuf.MessageLite
+import com.trueaccord.scalapb.GeneratedMessage
 import com.twitter.app.App
 import com.twitter.finagle._
-import proto._
+import scroach.proto._
+import cockroach.proto._
 
 private[scroach] object ResponseHandlers {
 
-  def handler[M <: MessageLite <% CockroachResponse[M], T](f: M => T): M => T = { res =>
+  def handler[M <: GeneratedMessage <% CockroachResponse[M], T](f: M => T): M => T = { res =>
     res.header match {
       case HasError(err) => throw new CockroachException(err, res)
       case NoError(_) => f(res)
     }
   }
 
-  def noOpHandler[M <: MessageLite <% CockroachResponse[M]] = handler[M, Unit] { _ => () }
+  def noOpHandler[M <: GeneratedMessage <% CockroachResponse[M]] = handler[M, Unit] { _ => () }
 
   val contains = handler[ContainsResponse, Boolean] {
     case ContainsResponse(_, Some(contains)) => contains
     case ContainsResponse(NoError(_), None) => false
   }
   val get = handler[GetResponse, Option[Bytes]] {
-    case GetResponse(_, Some(BytesValue(bytes))) => Some(bytes)
-    case GetResponse(NoError(_), Some(Value(None, _, _, _, _))) => None
+    case GetResponse(_, Some(BytesValue(bytes))) => bytes
     case GetResponse(NoError(_), None) => None
   }
   val put = noOpHandler[PutResponse]
   val cas: ConditionalPutResponse => Unit = {
-    case ConditionalPutResponse(ConditionFailed(ConditionFailedError(actual))) => throw ConditionFailedException(actual.flatMap(_.bytes).map(_.toByteArray))
+    case ConditionalPutResponse(ConditionFailed(ConditionFailedError(actual))) => throw ConditionFailedException(actual.map(_.getBytes).map(_.toByteArray))
     case res@ConditionalPutResponse(HasError(err)) => throw CockroachException(err, res)
     case _ => ()
   }
@@ -42,15 +43,16 @@ private[scroach] object ResponseHandlers {
   }
   val scan = handler[ScanResponse, Seq[(Bytes, Bytes)]] {
     case ScanResponse(NoError(_), rows) => rows.collect {
-      case KeyValue(key, BytesValue(bytes)) => (key.toByteArray, bytes)
+      case KeyValue(key, Some(BytesValue(Some(bytes)))) => (key.toByteArray, bytes)
     }
-  }
+  }/*
   val reapQueue = handler[ReapQueueResponse, Seq[Bytes]] {
     case ReapQueueResponse(NoError(_), values) => values.collect {
       case BytesValue(bytes) => bytes
     }
   }
   val enqueueMessage = noOpHandler[EnqueueMessageResponse]
+  */
 }
 
 object Scroach extends App {
