@@ -233,7 +233,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       got should be ('empty)
     }
   }
-
+/*
   it should "retry txn on write/write and read/write conflicts or fail txn when it cannot push" in withKv { kv =>
 
     sealed trait Method
@@ -310,7 +310,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       ) map(run)
     }
 
-  }
+  }*/
 
   it should "handle snapshot isolation" in withClient { client =>
     val key = randomBytes
