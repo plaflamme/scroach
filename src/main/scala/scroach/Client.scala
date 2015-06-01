@@ -98,9 +98,9 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     // TODO: lazy scan
     val spool = new SpoolSource[(Bytes, Bytes)]()
     def scanBatch(start: Bytes): Future[Unit] = {
-      val scan = if(from >= to) Future.value(Seq.empty)
+      val scan = if(start >= to) Future.value(Seq.empty)
       else {
-        val h = header(start).copy(endKey = Some(ByteString.copyFrom(to)))
+        val h = header(start).withEndKey(ByteString.copyFrom(to))
         val req = ScanRequest(header = h, maxResults = Some(batchSize))
         kv.scanEndpoint(req).map(ResponseHandlers.scan)
       }
@@ -115,8 +115,9 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
       }
     }
 
-    scanBatch(from)
-    spool()
+    val s = spool()
+    scanBatch(from) onFailure spool.raise
+    s
   }
 /*
   def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]] = {
