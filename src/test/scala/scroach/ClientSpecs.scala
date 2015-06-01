@@ -337,14 +337,13 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
 
   it should "handle serializable isolation" in withClient { client =>
 
-    // Reads value at o, appends to v if it exists and writes to k
-    def readWrite(k: Bytes, o: Bytes, v: Bytes) = {
+    def readWrite(k: Bytes, o: Bytes) = {
       client.tx() { txClient =>
         for {
-          vo <- txClient.get(o)
-          write = v ++ vo.getOrElse(Array.empty)
-          _ <- txClient.put(k, write)
-        } yield new String(write)
+          vo <- txClient.contains(o)// TODO: read counters
+          vk = if(vo) 2 else 1
+          _ <- txClient.increment(k, vk)
+        } yield vk
       }
     }
 
@@ -352,14 +351,12 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     val k2 = randomBytes
 
     for {
-      (writtenAtK1, writtenAtK2) <- readWrite(k1, k2, randomBytes) join readWrite(k2, k1, randomBytes)
-      valueAtK1 <- client.get(k1)
-      valueAtK2 <- client.get(k2)
+      (writtenAtK1, writtenAtK2) <- readWrite(k1, k2) join readWrite(k2, k1)
+      valueAtK1 <- client.increment(k1, 0)
+      valueAtK2 <- client.increment(k2, 0)
     } yield {
-      println(s"written at K1 ${writtenAtK1}")
-      println(s"written at K2 ${writtenAtK2}")
-      println(s"read at K1 ${valueAtK1.map(new String(_))}")
-      println(s"read at K2 ${valueAtK2.map(new String(_))}")
+      if(valueAtK1 == 1) valueAtK2 should equal(2)
+      if(valueAtK2 == 1) valueAtK1 should equal(2)
     }
   }
 
