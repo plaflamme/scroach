@@ -18,7 +18,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
 
   private[this] class Cluster(hostAndPort: String) {
 
-    val endpoint = Httpx.newClient(hostAndPort, "cockroach").toService
+    val endpoint = Httpx.client.withTlsWithoutValidation().newClient(hostAndPort, "cockroach").toService
 
     def stop() = Cluster.stop()
   }
