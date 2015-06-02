@@ -64,7 +64,7 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
       service(req.tx(tx.get))
         .map { response =>
           response.header match {
-            case ResponseHeader(Some(err), _, Some(txn)) if(err.getTransactionRestart == TransactionRestart.ABORT) => {
+            case ResponseHeader(Some(err), _, Some(txn)) if(err.getDetail.value.transactionAborted.isDefined) => {
               tx.set(Transaction(name = Some(name), isolation = Some(isolation), priority = txn.priority))
             }
             case ResponseHeader(_, _, Some(niu)) => merge(niu)

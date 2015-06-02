@@ -10,7 +10,7 @@ package object scroach {
 
   sealed trait TxResult
   case object TxComplete extends TxResult
-  case object TxAbort extends TxResult
+  case object TxBackoff extends TxResult
   case object TxRetry extends TxResult
 
   type Bytes = Array[Byte]

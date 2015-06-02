@@ -140,30 +140,23 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
 
     def tryTx(backoffs: Stream[Duration]): Future[T] = {
       f(txClient)
-        .rescue {
-          // TODO: revisit this with new error model (isRetryable)
-          case CockroachException(err, _) if(err.getDetail.value.isReadWithinUncertaintyInterval) => tryTx(DefaultBackoffs)
-        }
         .liftToTry
         .flatMap { result =>
-          // TODO: this has the wrong header. It needs to use the header of the KvClient inside the tx.
-          // We may need to change the signature of tx to take a Client => Future[T] so we can control this
           val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
           val endTxRequest = EndTransactionRequest(header = header, commit = Some(result.isReturn))
           txKv.endTxEndpoint(endTxRequest)
             .map {
               case EndTransactionResponse(NoError(_), _, _) => TxComplete
               case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.IMMEDIATE) => TxRetry
-              case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.BACKOFF) => TxRetry // TODO: signal backoff
-              case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.ABORT) => TxAbort
+              case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.BACKOFF) => TxBackoff
+              case response@EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.ABORT) => throw new CockroachException(err, response)
             }
             .map { tx: TxResult => tx -> result } // Typing tx as TxResult helps the compiler with the pattern match below
         }
         .flatMap {
-          // TODO: check the semantics of TransactionRestart.ABORT
           case (TxComplete, result) => Future.const(result)
           case (TxRetry, _) => tryTx(DefaultBackoffs)
-          case (TxAbort, _) => backoffs match {
+          case (TxBackoff, _) => backoffs match {
             case howlong #:: rest => Future sleep(howlong) before tryTx(rest)
             case _ => Future.exception(new RuntimeException) // This should never happen since the backoff stream is unbounded.
           }
