@@ -48,7 +48,7 @@ class TxClientSpecs extends ScroachSpec {
 
     def txAbortError(respTx: Transaction) = {
       Error()
-        .withTransactionRestart(TransactionRestart.ABORT)
+        .withTransactionRestart(TransactionRestart.BACKOFF)
         .withDetail(
           ErrorDetail()
             .withTransactionAborted(
