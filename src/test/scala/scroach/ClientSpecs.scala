@@ -15,12 +15,14 @@ import com.google.common.io.CharStreams
 import org.scalatest.{Suite, BeforeAndAfterAll}
 
 trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
+  private[this] class Cluster(hostsAndPort: String) {
 
-  private[this] class Cluster(hostAndPort: String) {
+    val endpoint = Httpx.client
+      .withTlsWithoutValidation()
+      .newClient(hostsAndPort, "cockroach")
+      .toService
 
-    val endpoint = Httpx.client.withTlsWithoutValidation().newClient(hostAndPort, "cockroach").toService
-
-    def stop() = Cluster.stop()
+    def close() = Await.result(endpoint.close())
   }
 
   private[this] object Cluster {
@@ -29,23 +31,40 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
         .directory(new java.io.File("src/test/scripts").getAbsoluteFile)
         .start().waitFor
     }
-    def apply() = {
 
-      stop()
+    private[this] def start(): Int = {
+      new ProcessBuilder("/bin/bash", "local_cluster.sh", "start")
+        .directory(new java.io.File("src/test/scripts").getAbsoluteFile)
+        .start()
+        .waitFor
+    }
 
-      val process = new ProcessBuilder("/bin/bash", "local_cluster.sh", "start")
+    private[this] def listNodes(): Seq[String] = {
+      val process = new ProcessBuilder("/bin/bash", "list_nodes.sh")
         .directory(new java.io.File("src/test/scripts").getAbsoluteFile)
         .redirectOutput(ProcessBuilder.Redirect.PIPE)
         .start()
-
-      println("Starting cockroach cluster")
       val output = CharStreams.readLines(new InputStreamReader(process.getInputStream)).asScala
+      process.waitFor
+      output.toSeq
+    }
 
-      if(process.waitFor == 0) {
-        val hostname = output.last
-        println(s"Cockroach cluster available at $hostname")
-        new Cluster(hostname)
-      } else throw new RuntimeException("failed to start cockroach cluster: " + output.mkString("\n"))
+    def apply(hostAndPort: String): Cluster = new Cluster(hostAndPort)
+    def apply(): Cluster = {
+      def tryConnect() = {
+        val nodes = listNodes()
+        if(nodes.nonEmpty) {
+          val hostAndPort = nodes mkString ","
+          println(s"Cockroach cluster running at $hostAndPort")
+          Some(apply(hostAndPort))
+        } else None
+      }
+
+      tryConnect() orElse {
+        println("Starting cockroach cluster")
+        start()
+        tryConnect()
+      } getOrElse(throw new IllegalStateException("Unable to start and connect to cockroach cluster."))
     }
   }
 
@@ -58,7 +77,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
   }
 
   override def afterAll() {
-    Option(instance.get()).foreach(_.stop())
+    Option(instance.get()).foreach(_.close())
   }
 
   val TestCaseTimeout = 30.seconds
