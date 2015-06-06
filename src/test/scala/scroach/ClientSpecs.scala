@@ -202,7 +202,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     for {
       _ <- Future.collect(keys.map(k => client.put(k, randomBytes)).toSeq)
       scanner <- client.scan(keys.head, keys.last.next, 10)
-      result <- scanner.foldLeft(0) { case(b, (key, value)) => b + 1}
+      result <- scanner.foldLeft(0) { case(b, (key, value)) => b + 1 }
     } yield {
       result should be (100)
     }
@@ -220,7 +220,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       got should be ('empty)
     }
   }
-/*
+
   it should "retry txn on write/write and read/write conflicts or fail txn when it cannot push" in withKv { kv =>
 
     sealed trait Method
@@ -240,6 +240,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       val client = KvClient(kv, "root", Some(nonTxPriority))
 
       val conflictDone = new Promise[Unit]
+      val conflictCreated = new Promise[Unit]
 
       def createConflict(): Future[Unit] = {
         val conflict = test.method match {
@@ -247,7 +248,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
           case Get => client.get(key).unit
         }
 
-        conflict rescue {
+        conflict ensure { conflictCreated.setDone } rescue {
           case CockroachException(e, _) if (e.getDetail.value.`writeIntent`.isDefined) => createConflict()
         }
       }
@@ -261,7 +262,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
           .flatMap { _ =>
             if(count == 1) {
               createConflict ensure { conflictDone.setDone }
-              Future.sleep(150.milliseconds)
+              conflictCreated
             } else Future.Done
           }
       }
@@ -282,22 +283,20 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       }
     }
 
-    Future.collect {
       Seq(
         // write/write conflicts
         TestCase(Put, IsolationType.SNAPSHOT, true, 2),
         TestCase(Put, IsolationType.SERIALIZABLE, true, 2),
-        TestCase(Put, IsolationType.SNAPSHOT, false, 1),
-        TestCase(Put, IsolationType.SERIALIZABLE, false, 1),
+// Disabled: https://github.com/cockroachdb/cockroach/issues/877#issuecomment-104276757
+//        TestCase(Put, IsolationType.SNAPSHOT, false, 1)
+//        TestCase(Put, IsolationType.SERIALIZABLE, false, 1),
         // read/write conflicts
         TestCase(Get, IsolationType.SNAPSHOT, true, 1),
         TestCase(Get, IsolationType.SERIALIZABLE, true, 2),
-        TestCase(Get, IsolationType.SNAPSHOT, false, 1),
-        TestCase(Get, IsolationType.SERIALIZABLE, false, 1)
-      ) map(run)
-    }
-
-  }*/
+        TestCase(Get, IsolationType.SNAPSHOT, false, 1)
+//        TestCase(Get, IsolationType.SERIALIZABLE, false, 1)
+      ).foldLeft(Future.Done) { case (f, t) => f.before(run(t)) }
+  }
 
   it should "handle snapshot isolation" in withClient { client =>
     val key = randomBytes
