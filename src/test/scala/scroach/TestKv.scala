@@ -6,7 +6,6 @@ import cockroach.proto._
 
 class TestKv extends proto.Kv {
   def noop[Req, Rep]() = Service.mk { (req: Req) => Future.exception[Rep](new UnsupportedOperationException) }
-  override val containsEndpoint: Service[ContainsRequest, ContainsResponse] = noop()
 //  override val reapQueueEndpoint: Service[ReapQueueRequest, ReapQueueResponse] = noop()
   override val scanEndpoint: Service[ScanRequest, ScanResponse] = noop()
   override val putEndpoint: Service[PutRequest, PutResponse] = noop()

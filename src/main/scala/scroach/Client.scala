@@ -11,7 +11,6 @@ import cockroach.proto._
 // TODO: handle bytes vs. counter values. For example get for a counter would return Future[Long]
 // TODO: handle timestamps. Potentially wrap Value into a a union?
 trait BaseClient {
-  def contains(key: Bytes): Future[Boolean]
   def get(key: Bytes): Future[Option[Bytes]]
   def put(key: Bytes, value: Bytes): Future[Unit]
   def put(key: Bytes, value: Long): Future[Unit]
@@ -36,11 +35,6 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
   }
   private[this] def header(key: Bytes): RequestHeader = {
     header().copy(key = Option(key).map(ByteString.copyFrom(_)))
-  }
-
-  def contains(key: Bytes): Future[Boolean] = {
-    kv.containsEndpoint(ContainsRequest(header = header(key)))
-      .map { ResponseHandlers.contains }
   }
 
   def get(key: Bytes): Future[Option[Bytes]] = {

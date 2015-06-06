@@ -92,19 +92,6 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     }
   }
 
-  it should "correctly respond to contains" in withClient { client =>
-    val key = randomBytes
-    val value = randomBytes
-    for {
-      empty <- client.contains(key)
-      _ <- client.put(key, value)
-      exists <- client.contains(key)
-    } yield {
-      empty should be(false)
-      exists should be(true)
-    }
-  }
-
   it should "read its own writes" in withClient { client =>
     val key = randomBytes
     val value = randomBytes
@@ -334,7 +321,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       got.get should equal (value)
     }
   }
-
+/* Re-enable when we implement get for counters
   it should "handle serializable isolation" in withClient { client =>
 
     def readWrite(k: Bytes, o: Bytes) = {
@@ -359,11 +346,11 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       if(valueAtK2 == 1) valueAtK1 should equal(2)
     }
   }
-
-  "BatchClient" should "handle contains" in withBatchClient { client =>
-    Batch.collect(Seq(client.contains(randomBytes), client.contains(randomBytes)))
-      .map { contains =>
-        contains forall { _ == false } should be(true)
+*/
+  "BatchClient" should "handle get" in withBatchClient { client =>
+    Batch.collect(Seq(client.get(randomBytes), client.get(randomBytes)))
+      .map { gots =>
+        gots forall { _.isEmpty } should be(true)
       }
   }
 
@@ -378,17 +365,17 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     // 2- put(k2, _)
     // 3- contains(k1), contains(k2)
 
-    Batch.collect(Seq(client.contains(k1).map(k1 -> _), client.contains(k2).map(k2 -> _)))
-      .flatMap { contains =>
-        Batch.collect(contains.map { case(k,c) =>
-          if(!c) client.put(k, randomBytes) else Batch.const(())
+    Batch.collect(Seq(client.get(k1).map(k1 -> _), client.get(k2).map(k2 -> _)))
+      .flatMap { gots =>
+        Batch.collect(gots.map { case(k,c) =>
+          if(c.isEmpty) client.put(k, randomBytes) else Batch.const(())
         })
       }
       .flatMap { _ =>
-        Batch.collect(Seq(client.contains(k1), client.contains(k2)))
+        Batch.collect(Seq(client.get(k1), client.get(k2)))
       }
-      .map { contains =>
-        contains forall(_ == true) should be (true)
+      .map { gots =>
+        gots forall(_.isDefined) should be (true)
       }
   }
 

@@ -10,7 +10,6 @@ import com.twitter.finagle.httpx.{RequestBuilder, Response, Request}
 import com.twitter.util.{Duration, Stopwatch, Return, Throw}
 
 trait Kv {
-  val containsEndpoint: Service[ContainsRequest, ContainsResponse]
   val getEndpoint: Service[GetRequest, GetResponse]
   val putEndpoint: Service[PutRequest, PutResponse]
   val casEndpoint: Service[ConditionalPutRequest, ConditionalPutResponse]
@@ -76,7 +75,6 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
     }
   }
 
-  val containsEndpoint = TxFilter[ContainsRequest, ContainsResponse]() andThen kv.containsEndpoint
   val getEndpoint = TxFilter[GetRequest, GetResponse]() andThen kv.getEndpoint
   val putEndpoint = TxFilter[PutRequest, PutResponse]() andThen kv.putEndpoint
   val casEndpoint = TxFilter[ConditionalPutRequest, ConditionalPutResponse]() andThen kv.casEndpoint
@@ -184,7 +182,7 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
         }
     }
   }
-  val containsEndpoint = newEndpoint[ContainsRequest, ContainsResponse]("Contains", ContainsResponse.parseFrom)
+
   val getEndpoint = newEndpoint[GetRequest, GetResponse]("Get", GetResponse.parseFrom)
   val putEndpoint = newEndpoint[PutRequest, PutResponse]("Put", PutResponse.parseFrom)
   val casEndpoint = newEndpoint[ConditionalPutRequest, ConditionalPutResponse]("ConditionalPut", ConditionalPutResponse.parseFrom)

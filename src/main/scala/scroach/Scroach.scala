@@ -20,10 +20,6 @@ private[scroach] object ResponseHandlers {
 
   def noOpHandler[M <: GeneratedMessage <% CockroachResponse[M]] = handler[M, Unit] { _ => () }
 
-  val contains = handler[ContainsResponse, Boolean] {
-    case ContainsResponse(_, Some(contains)) => contains
-    case ContainsResponse(NoError(_), None) => false
-  }
   val get = handler[GetResponse, Option[Bytes]] {
     case GetResponse(_, Some(BytesValue(bytes))) => bytes
     case GetResponse(NoError(_), None) => None

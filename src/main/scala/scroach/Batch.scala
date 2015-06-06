@@ -107,7 +107,6 @@ object Batch {
 }
 
 trait BatchClient {
-  def contains(key: Bytes): Batch[Boolean]
   def get(key: Bytes): Batch[Option[Bytes]]
   def put(key: Bytes, value: Bytes): Batch[Unit]
   def put(key: Bytes, value: Long): Batch[Unit]
@@ -141,10 +140,6 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
         case Some(response) => handler(response)
         case None => throw new RuntimeException("invalid response type")
       }
-  }
-
-  def contains(key: Bytes): Batch[Boolean] = {
-    batch(ContainsRequest(header = header(key)), _.value.contains, ResponseHandlers.contains)
   }
 
   def get(key: Bytes): Batch[Option[Bytes]] = {
