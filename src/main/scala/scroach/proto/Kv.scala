@@ -99,7 +99,12 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
       def toLog: String = opt.fold("") { _.toString }
     }
     implicit class TimestampLogging(opt: Option[Timestamp]) {
-      def toLog: String = opt.fold("") { ts => s"${ts.getWallTime},${ts.getLogical}" }
+      def toLog: String = opt.fold("") { ts => f"${ts.getWallTime.toDouble/1E9}%.09f,${ts.getLogical}" }
+    }
+    def hdrString(header: RequestHeader) = {
+      val user = header.user.toLog
+      val priority = header.userPriority.toLog
+      s"(user=$user pri=$priority)"
     }
     def txnString(transaction: Option[Transaction]) = {
       for {
@@ -138,18 +143,22 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
           case _: ErrorDetail.Value.WriteIntent => "WriteIntent"
           case _: ErrorDetail.Value.WriteTooOld => "WriteTooOld"
         }
-      } yield s"(error=$typ retry=$retry restart=$restart) "
+      } yield s"(error=$typ retry=$retry restart=$restart)"
     } getOrElse("ok")
 
     def logRequest(nonce: String, request: Req) = {
+      val hdrStr = hdrString(request.header)
       val txStr = txnString(request.header.txn)
       println(f"[$nonce]         ->$cmd%-14s $txStr")
     }
 
     def logResponse(nonce: String, response: Res, duration: Duration) = {
-      val tx = txnString(response.header.txn)
-      val err = errString(response.header.error)
-      println(f"[$nonce] ${duration.inMillis}%5dms <-$cmd%-14s $tx$err")
+      val status = Seq(
+        txnString(response.header.txn),
+        errString(response.header.error)
+      ) filter(_.nonEmpty) mkString(" ")
+
+      println(f"[$nonce] ${duration.inMillis}%5dms <-$cmd%-14s $status")
     }
 
     def logException(nonce: String, exception: Throwable, duration: Duration) = {
