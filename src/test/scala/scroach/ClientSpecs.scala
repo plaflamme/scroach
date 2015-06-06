@@ -61,22 +61,24 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
     Option(instance.get()).foreach(_.stop())
   }
 
+  val TestCaseTimeout = 30.seconds
+
   def withKv(test: proto.Kv => Future[Any]) = {
     Await.result {
-      test(HttpKv(cluster()))
+      test(HttpKv(cluster())).raiseWithin(TestCaseTimeout)
     }
   }
 
   def withClient(test: Client => Future[Any]) = {
     Await.result {
-      test(KvClient(HttpKv(cluster()), "root"))
+      test(KvClient(HttpKv(cluster()), "root")).raiseWithin(TestCaseTimeout)
     }
   }
 
   def withBatchClient[T](test: BatchClient => Batch[T]) = {
     val client = KvBatchClient(HttpKv(cluster()), "root")
     Await.result {
-      client.run(test(client))
+      client.run(test(client)).raiseWithin(TestCaseTimeout)
     }
   }
 }
