@@ -19,8 +19,6 @@ trait BaseClient {
   def delete(key: Bytes): Future[Unit]
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Future[Long]
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
-//  def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
-//  def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
   def batched: BatchClient
 }
 trait TxClient extends BaseClient
@@ -113,18 +111,7 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     scanBatch(from) onFailure spool.raise
     s
   }
-/*
-  def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]] = {
-    require(maxItems > 0, "maxItems must be > 0")
-    val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
-    kv.reapQueueEndpoint(req).map { ResponseHandlers.reapQueue }
-  }
 
-  def enqueueMessage(key: Bytes, message: Bytes): Future[Unit] = {
-    val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
-    kv.enqueueEndpoint(req).map { ResponseHandlers.enqueueMessage }
-  }
-*/
   // Exponential backoff from 50.ms to 3600.ms then constant 5.seconds
   private[this] val DefaultBackoffs = Backoff.exponential(50.milliseconds, 2).take(6) ++ Backoff.const(5.seconds)
 

@@ -65,16 +65,6 @@ package object proto {
     val header: ResponseHeader
   }
 
-  implicit class RichContainsRequest(req: ContainsRequest) extends CockroachRequest[ContainsRequest] {
-    val header = req.header
-    def batched = RequestUnion(RequestUnion.Value.Contains(req))
-    def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
-    }
-  }
-  implicit class RichContainsResponse(res: ContainsResponse) extends CockroachResponse[ContainsResponse] {
-    val header = res.header
-  }
   implicit class RichGetRequest(req: GetRequest) extends CockroachRequest[GetRequest] {
     val header = req.header
     def batched = RequestUnion(RequestUnion.Value.Get(req))
@@ -144,27 +134,7 @@ package object proto {
   }
   implicit class RichScanResponse(res: ScanResponse) extends CockroachResponse[ScanResponse] {
     val header = res.header
-  }/*
-  implicit class RichReapQueueRequest(req: ReapQueueRequest) extends CockroachRequest[ReapQueueRequest] {
-    val header = req.header
-    def batched = RequestUnion(reapQueue = Some(req))
-    def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
-    }
   }
-  implicit class RichReapQueueResponse(res: ReapQueueResponse) extends CockroachResponse[ReapQueueResponse] {
-    val header = res.header
-  }
-  implicit class RichEnqueueMessageRequest(req: EnqueueMessageRequest) extends CockroachRequest[EnqueueMessageRequest] {
-    val header = req.header
-    def batched = RequestUnion(enqueueMessage = Some(req))
-    def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
-    }
-  }
-  implicit class RichEnqueueMessageResponse(res: EnqueueMessageResponse) extends CockroachResponse[EnqueueMessageResponse] {
-    val header = res.header
-  }*/
   implicit class RichBatchRequest(req: BatchRequest) extends CockroachRequest[BatchRequest] {
     val header = req.header
     def batched = ???

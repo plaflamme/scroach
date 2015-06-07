@@ -116,11 +116,6 @@ trait BatchClient {
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long]
   // Would require a Spool in terms of Batch to allow scanning in batches. So this is just a single scan request
   def scan(from: Bytes, to: Bytes, maxResults: Long = Long.MaxValue): Batch[Seq[(Bytes, Bytes)]]
-//  def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit]
-//  def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]]
-  // TODO: endTx, is the transaction on the batch or on individual requests?
-  // If it's on the batch, then constructing a BatchClient with a TxKv would "just work"
-  // If it's on individual requests, then that's a lot more complicated since we would need to replay portions of batches to handle tx retries.
 
   def run[A](batch: Batch[A]): Future[A]
 }
@@ -197,18 +192,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
       batch(req, _.value.scan, ResponseHandlers.scan)
     }
   }
-/*
-  def enqueueMessage(key: Bytes, message: Bytes): Batch[Unit] = {
-    val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
-    batch(req, _.enqueueMessage,  ResponseHandlers.enqueueMessage)
-  }
 
-  def reapQueue(key: Bytes, maxItems: Int): Batch[Seq[Bytes]] = {
-    require(maxItems > 0, "maxItems must be > 0")
-    val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
-    batch(req, _.reapQueue,  ResponseHandlers.reapQueue)
-  }
-*/
   def run[A](batch: Batch[A]): Future[A] = {
     batch.run { input =>
       if(input.isEmpty) Future.value(Seq.empty)

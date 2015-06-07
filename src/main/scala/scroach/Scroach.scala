@@ -41,14 +41,7 @@ private[scroach] object ResponseHandlers {
     case ScanResponse(NoError(_), rows) => rows.collect {
       case KeyValue(key, Some(BytesValue(Some(bytes)))) => (key.toByteArray, bytes)
     }
-  }/*
-  val reapQueue = handler[ReapQueueResponse, Seq[Bytes]] {
-    case ReapQueueResponse(NoError(_), values) => values.collect {
-      case BytesValue(bytes) => bytes
-    }
   }
-  val enqueueMessage = noOpHandler[EnqueueMessageResponse]
-  */
 }
 
 object Scroach extends App {
