@@ -4,7 +4,7 @@ import scroach.proto._
 import com.google.protobuf.ByteString
 import com.twitter.concurrent.{SpoolSource, Spool}
 import com.twitter.finagle.service.Backoff
-import com.twitter.util.{Duration, Future}
+import com.twitter.util.{Throw, Return, Duration, Future}
 import com.twitter.conversions.time._
 import cockroach.proto._
 
@@ -119,28 +119,30 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     val txKv = TxKv(kv, isolation = isolation)
     val txClient = new KvClient(txKv, txUser getOrElse user, priority) with TxClient
 
+    def endTx(commit: Boolean) = {
+      val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
+      val endTxRequest = EndTransactionRequest(header = header, commit = Some(commit))
+      txKv.endTxEndpoint(endTxRequest)
+        .map {
+          case EndTransactionResponse(NoError(_), _, _) => ()
+          case response@EndTransactionResponse(HasError(err), _, _) => throw new CockroachException(err, response)
+        }
+    }
+
     def tryTx(backoffs: Stream[Duration]): Future[T] = {
       f(txClient)
-        .liftToTry
         .flatMap { result =>
-          val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
-          val endTxRequest = EndTransactionRequest(header = header, commit = Some(result.isReturn))
-          txKv.endTxEndpoint(endTxRequest)
-            .map {
-              case EndTransactionResponse(NoError(_), _, _) => TxComplete
-              case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.IMMEDIATE) => TxRetry
-              case EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.BACKOFF) => TxBackoff
-              case response@EndTransactionResponse(HasError(err), _, _) if(err.getTransactionRestart == TransactionRestart.ABORT) => throw new CockroachException(err, response)
-            }
-            .map { tx: TxResult => tx -> result } // Typing tx as TxResult helps the compiler with the pattern match below
+          endTx(true).map { _ => result }
         }
+        .liftToTry
         .flatMap {
-          case (TxComplete, result) => Future.const(result)
-          case (TxRetry, _) => tryTx(DefaultBackoffs)
-          case (TxBackoff, _) => backoffs match {
+          case Return(result) => Future.value(result)
+          case Throw(CockroachException(err, response)) if(err.getTransactionRestart == TransactionRestart.IMMEDIATE) => tryTx(DefaultBackoffs)
+          case Throw(CockroachException(err, response)) if(err.getTransactionRestart == TransactionRestart.BACKOFF) => backoffs match {
             case howlong #:: rest => Future sleep(howlong) before tryTx(rest)
             case _ => Future.exception(new RuntimeException) // This should never happen since the backoff stream is unbounded.
           }
+          case Throw(t) => endTx(false) before Future.exception(t)
         }
     }
 
