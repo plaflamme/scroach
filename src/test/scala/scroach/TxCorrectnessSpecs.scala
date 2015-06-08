@@ -43,177 +43,18 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     enumIsolations(3, OnlySerializable).toSet should be(Set(Seq(SSI, SSI, SSI)))
   }
 
-  sealed trait Cmd
-  case class Read(key: String) extends Cmd
-  case class Incr(key: String) extends Cmd
-  case class Scan(from: String, to: String) extends Cmd
-  case class Delete(from: String, to: String) extends Cmd
-  case class Sum(key: String) extends Cmd
-  case object Commit extends Cmd
-  object Cmd {
-    val ReadExp = """R\((.+)\)""".r
-    val IncrExp = """I\((.+)\)""".r
-    val ScanExp = """SC\((.+)-(.+)\)""".r
-    val DeleteExp = """DR\((.+)-(.+)\)""".r
-    val SumExp = """SUM\((.+)\)""".r
-    val CommitExp = "C".r
-    def apply(c: String) = {
-      c match {
-        case ReadExp(key) => Read(key)
-        case IncrExp(key) => Incr(key)
-        case ScanExp(from, to) => Scan(from, to)
-        case DeleteExp(from, to) => Delete(from, to)
-        case SumExp(key) => Sum(key)
-        case CommitExp() => Commit
+  def interleave[T](a: List[T], b: List[T], symmetric: Boolean = false): List[List[T]] = {
+    (a, b) match {
+      case (xs, Nil) => List(xs)
+      case (Nil, ys) => List(ys)
+      case(x :: xs, y :: ys) => {
+        interleave(xs, y :: ys).map { l => x :: l } ++
+          (if(symmetric) List.empty else interleave(x :: xs, ys).map { l => y :: l })
       }
     }
   }
 
-  case class Command(cmd: Cmd, txIdx: Int) {
-    def apply(txClient: TxClient, historyId: Int, nonce: String) = {
-      cmd match {
-        case Read(k) => txClient.get(s"$k$historyId$nonce".getBytes(Charsets.Utf8))
-        case Incr(k) => txClient.increment(s"$k$historyId$nonce".getBytes(Charsets.Utf8), 1)
-        case Commit => Future.Done
-      }
-    }
-    override def toString() = {
-      cmd match {
-        case Read(k) => s"R$txIdx($k)"
-        case Incr(k) => s"I$txIdx($k)"
-        case Scan(f,t) => s"SC$txIdx($f-$t)"
-        case Delete(f,t) => s"DR$txIdx($f-$t)"
-        case Sum(k) => s"SUM$txIdx($k)"
-        case Commit => s"C$txIdx"
-      }
-    }
-  }
-
-  case class History(cmds: Seq[Command]) {
-    private[this] val historyId = History.nextId
-    private[this] def interleave(a: List[Command], b: List[Command], symmetric: Boolean = false): List[List[Command]] = {
-      (a, b) match {
-        case (xs, Nil) => List(xs)
-        case (Nil, ys) => List(ys)
-        case(x :: xs, y :: ys) => {
-          interleave(xs, y :: ys).map { l => x :: l } ++
-            (if(symmetric) List.empty else interleave(x :: xs, ys).map { l => y :: l })
-        }
-      }
-    }
-
-    def interleave(other: History, symmetric: Boolean): Seq[History] = {
-      interleave(cmds.toList, other.cmds.toList, symmetric).map {
-        History(_)
-      }.toSeq
-    }
-
-    def read(client: Client, key: String, nonce: String): Future[Long] = {
-      client.increment(s"$key$historyId$nonce".getBytes(Charsets.Utf8), 0)
-    }
-
-    def run(client: Client, priorities: Seq[Int], isolations: Seq[IsolationType], nonce: String) = {
-
-      case class Ex(cmd: Command, previous: Option[Ex], done: Promise[Unit])
-
-      var previous: Option[Ex] = None
-      val plan = cmds
-        .map { cmd =>
-          val e = Ex(cmd, previous, new Promise[Unit])
-          previous = Some(e)
-          e
-        }
-
-      case class Tx(idx: Int, priority: Int, isolation: IsolationType, cmds: Seq[Ex], commit: Ex)
-
-      def txCmds(txId: Int) = plan.filter {
-        case Ex(Command(Commit, id), _, _) if(id == txId) => false
-        case Ex(Command(cmd, id), _, _) if(id == txId) => true
-        case _ => false
-      }
-      def txCommit(txId: Int) = plan.filter {
-        case Ex(Command(Commit, id), _, _) if(id == txId) => true
-        case Ex(Command(cmd, id), _, _) if(id == txId) => false
-        case _ => false
-      }.head
-
-      val txs = for(i <- 0 until priorities.size) yield {
-        Tx(
-          i+1,
-          priorities(i),
-          isolations(i),
-          txCmds(i+1),
-          txCommit(i+1)
-        )
-      }
-
-      txs.foreach { tx =>
-        println(s"tx${tx.idx} p${tx.priority} ${tx.isolation}: ${tx.cmds.map(_.cmd).mkString(" ")}")
-      }
-
-      val results = txs.map { tx =>
-        var tried = false
-        val txn = client.tx(tx.isolation, priority = Some(-tx.priority)) { txClient =>
-          if(tried == true) tx.commit.done.setDone
-          tried = true
-          val c = Future.collect(tx.cmds.map { case Ex(cmd, previous, done) =>
-            previous.foreach { p =>
-              println(s"$cmd waiting for ${p.cmd}")
-            }
-            for {
-              _ <- previous.map(_.done).getOrElse(Future.Done)
-              _ = println(s"tx${tx.idx} executing $cmd")
-              _ <- cmd(txClient, historyId, nonce) ensure { done.setDone }
-            } yield ()
-          }) ensure { println(s"tx${tx.idx} done") }
-
-          // Wait for our commit's previous step to complete before commiting
-          c.flatMap { _ =>
-            tx.commit.previous.map(_.done).getOrElse(Future.Done)
-          }
-        }
-
-        // Signal that our commit is complete
-        txn.ensure { tx.commit.done.setDone }
-      }
-      Future
-        .collect(results)
-        .liftToTry
-        .map {
-          case Return(_) => s"Running history ${cmds.mkString(" ")} priorities ${priorities.mkString(",")} isolations ${isolations.mkString(",")}: success"
-          case Throw(t) => s"Running history ${cmds.mkString(" ")} priorities ${priorities.mkString(",")} isolations ${isolations.mkString(",")}: failure $t"
-        }
-    }
-
-    override def toString(): String = {
-      f"$historyId%3d: [${cmds.mkString(" ")}]"
-    }
-  }
-  object History {
-    // Start with a random value so that we don't reuse the same cells across test runs against the same cluster.
-    var id: Int = math.abs(scala.util.Random.nextInt())
-    def nextId: Int = {
-      id += 1
-      id
-    }
-    def apply(txs: Seq[String]): Seq[History] = {
-      txs.zipWithIndex.map { case(h,i) => History(h, i+1) }
-    }
-    def apply(tx: String, idx: Int): History = {
-      val cmds = tx.split(" ").map {
-        Cmd(_)
-      }.map { Command(_, idx) }
-      History(cmds.toSeq)
-    }
-  }
-
-  def enumerateHistories(txs: Seq[History], symmetric: Boolean): Seq[History] = {
-    txs.tail.foldLeft(Seq(txs.head)) { case(histories, h) =>
-      histories.flatMap(l => l.interleave(h, symmetric))
-    }
-  }
-
-  "enumerateHistories" should "correctly enumerate histories" in {
+  "interleave" should "correctly enumerate histories" in {
     val notSymmetric = Seq(
       "I1(A) C1 I2(A) C2",
       "I1(A) I2(A) C1 C2",
@@ -224,44 +65,162 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     )
     val symmetric = notSymmetric.take(3)
 
-    val histories = History(Seq("I(A) C", "I(A) C"))
+    val histories = interleave(List("I1(A)", "C1"), List("I2(A)", "C2"), false)
 
-    enumerateHistories(histories, false).map { _.cmds.mkString(" ") }.sorted should be(notSymmetric.sorted)
-    enumerateHistories(histories, true).map { _.cmds.mkString(" ") }.sorted should be(symmetric.sorted)
+    interleave(List("I1(A)", "C1"), List("I2(A)", "C2"), false).map { _.mkString(" ") }.sorted should be(notSymmetric.sorted)
+    interleave(List("I1(A)", "C1"), List("I2(A)", "C2"), true).map { _.mkString(" ") }.sorted should be(symmetric.sorted)
   }
 
-  "Tx Correctness" should "inconsistent analysis anomaly" in withClient { client =>
-    // See TestTxnDBInconsistentAnalysisAnomaly
-    val tx1 = "R(A) R(B) SUM(C) C"
-    val tx2 = "I(A) I(B) C"
+  sealed trait Cmd
+  case class Read(key: String) extends Cmd
+  case class Incr(key: String) extends Cmd
+  case class Scan(from: String, to: String) extends Cmd
+  case class Delete(from: String, to: String) extends Cmd
+  case class Sum(key: String) extends Cmd
+  case object Commit extends Cmd
 
-    def check(isolationLevels: Seq[IsolationType], txs: Seq[String], f: () => Future[Unit]) = {
+  // A transaction is a sequence of Cmd
+  type Tx = Seq[Cmd]
 
-      val priorities = (for(i <- 1 to txs.size) yield i).permutations.toSeq
-      val isolations = enumIsolations(txs.size, isolationLevels)
-      val histories = enumerateHistories(History(txs), false)
+  type TxState = Map[String, Long]
 
+  // A Cmd within a transaction within a history
+  case class TxCmd(cmd: Cmd, txId: Int) {
+
+    def execute(txClient: TxClient, uniqKey: (String) => Bytes, state: TxState): Future[TxState] = cmd match {
+      case Read(k) => txClient.get(uniqKey(k)).map(_ => state)
+      case Incr(k) => txClient.increment(uniqKey(k), 1).map(_ => state)
+      case Commit => Future.value(state)
+    }
+
+    override def toString() = {
+      cmd match {
+        case Read(k) => s"R$txId($k)"
+        case Incr(k) => s"I$txId($k)"
+        case Scan(f,t) => s"SC$txId($f-$t)"
+        case Delete(f,t) => s"DR$txId($f-$t)"
+        case Sum(k) => s"SUM$txId($k)"
+        case Commit => s"C$txId"
+      }
+    }
+  }
+
+  // A history is a sequence of interleaving TxCmd
+  case class History(id: Int, cmds: List[TxCmd])
+
+  // A TestCase is a single history with an isolation level and a priority for each of its transactions
+  case class TestCase(history: History, isolationLevels: Seq[IsolationType], priorities: Seq[Int]) {
+    // So that the test keys are unique between runs in the same cluster
+    private[this] val nonce = scala.util.Random.alphanumeric.take(20).mkString
+
+    def uniqKey(key: String) = s"$key${history.id}$nonce".getBytes(Charsets.Utf8)
+
+    override def toString(): String = {
+      val txStr = (isolationLevels zip priorities).zipWithIndex map { case((i,p), id) =>
+        s"[tx($id): iso=$i pri=$p]"
+      } mkString(" ")
+      val cmdStr = history.cmds.mkString("[", " ", "]")
+
+      s"$cmdStr $txStr"
+    }
+  }
+
+  object Planner {
+    def apply(cmds: List[List[Cmd]], isolationLevels: Seq[IsolationType], symmetric: Boolean): Seq[TestCase] = {
+      val txns = cmds
+        .zipWithIndex
+        .map { case(cmds, id) =>
+          cmds.map { cmd => TxCmd(cmd, id) }.toList
+        }
+      val histories = txns.tail.foldLeft(List(txns.head)) { case(histories, c) =>
+        histories.flatMap { h =>
+          interleave(h, c, symmetric)
+        }
+      }.zipWithIndex.map { case(history, id) =>
+        History(id, history)
+      }
+
+      val priorities = (for(i <- 1 to cmds.size) yield i).permutations.toSeq
+      val isolations = enumIsolations(cmds.size, isolationLevels)
       for {
         priority <- priorities
         isolation <- isolations
         history <- histories
-      } yield {
-        Await.result {
-          val nonce = scala.util.Random.alphanumeric.take(20).mkString
-          for {
-            s <- history.run(client, priority, isolation, nonce)
-            _ = println(s)
-            r <- history.read(client, "A", nonce)
-          } yield {
-            r should be(2)
-          }
-        }
-      }
-
+      } yield TestCase(history, isolation, priority)
     }
-
-    val p = check(BothIsolations, Seq("I(A) C", "I(A) C"), () => Future.Done)
-    Future.Done
   }
 
+  object Runner {
+    case class ExecutionStep(cmd: TxCmd, previous: Option[ExecutionStep], done: Promise[Unit])
+    case class Transaction(id: Int, isolationLevel: IsolationType, priority: Int, steps: Seq[ExecutionStep], commit: ExecutionStep)
+
+    def run(client: Client, testCase: TestCase) = {
+      var previous: Option[ExecutionStep] = None
+      val steps = testCase.history.cmds.map { cmd =>
+        val e = ExecutionStep(cmd, previous, new Promise[Unit])
+        previous = Some(e)
+        e
+      }
+
+      val transactions = (testCase.isolationLevels zip testCase.priorities).zipWithIndex.map { case ((isolation, priority), id) =>
+        val allCmds = steps.filter {
+          _.cmd.txId == id
+        }
+        val cmds = allCmds.takeWhile(_.cmd.cmd != Commit)
+        val commit = allCmds.find(_.cmd.cmd == Commit).head
+        Transaction(id, isolation, priority, cmds, commit)
+      }
+
+      def runTx(tx: Transaction): Future[TxState] = {
+        var triedOnce = false
+        val txRun = client.tx(tx.isolationLevel, priority = Some(-tx.priority)) { txClient =>
+          if(triedOnce) {
+            tx.steps.foreach { _.done.setDone }
+            tx.commit.done.setDone
+          }
+          triedOnce = true
+          tx.steps.foldLeft(Future.value(Map.empty[String, Long])) { case(previousState, ExecutionStep(cmd, previous, done)) =>
+            for {
+              s <- previousState
+              _ <- previous.map(_.done).getOrElse(Future.Done)
+              state <- cmd.execute(txClient, testCase.uniqKey, s) ensure { done.setDone }
+            } yield state
+          } flatMap { state =>
+            // Wait for our commit's previous step to complete before exiting the transactional block
+            tx.commit.previous.map(_.done).getOrElse(Future.Done) before Future.value(state)
+          }
+        }
+
+        txRun ensure { tx.commit.done.setDone }
+      }
+
+      Future.collect(transactions.map(runTx(_).liftToTry))
+    }
+  }
+
+  object Verifier {
+    def apply(client: Client, txs: List[List[Cmd]], isolations: Seq[IsolationType], symmetric: Boolean)(f: (TestCase, Seq[Try[TxState]]) => Future[Unit]) = {
+      Planner(txs, isolations, symmetric)
+        .foldLeft(Future.Done) { case(previous, testCase) =>
+          for {
+            _ <- previous
+            _ = println(testCase)
+            results <- Runner.run(client, testCase)
+            _ <- f(testCase, results)
+            _ = println("========")
+          } yield ()
+        }
+    }
+  }
+
+  "Tx Correctness" should "handle no anomaly" in withClient { client =>
+    val tx = List(Incr("A"), Commit)
+
+    Verifier(client, List(tx, tx), BothIsolations, false) { case(testCase, results) =>
+      // TODO: read counters
+      client.increment(testCase.uniqKey("A"), 0) map { r =>
+        r should be(2)
+      }
+    }
+  }
 }
