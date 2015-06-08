@@ -70,11 +70,10 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   case class Command(cmd: Cmd, txIdx: Int) {
-    def apply(txClient: TxClient, historyId: Int) = {
-      println(toString)
+    def apply(txClient: TxClient, historyId: Int, nonce: String) = {
       cmd match {
-        case Read(k) => txClient.get(s"$k$historyId".getBytes(Charsets.Utf8))
-        case Incr(k) => txClient.increment(s"$k$historyId".getBytes(Charsets.Utf8), 1)
+        case Read(k) => txClient.get(s"$k$historyId$nonce".getBytes(Charsets.Utf8))
+        case Incr(k) => txClient.increment(s"$k$historyId$nonce".getBytes(Charsets.Utf8), 1)
         case Commit => Future.Done
       }
     }
@@ -91,7 +90,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   case class History(cmds: Seq[Command]) {
-    val historyId = History.nextId
+    private[this] val historyId = History.nextId
     private[this] def interleave(a: List[Command], b: List[Command], symmetric: Boolean = false): List[List[Command]] = {
       (a, b) match {
         case (xs, Nil) => List(xs)
@@ -109,7 +108,11 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
       }.toSeq
     }
 
-    def run(client: Client, priorities: Seq[Int], isolations: Seq[IsolationType]) = {
+    def read(client: Client, key: String, nonce: String): Future[Long] = {
+      client.increment(s"$key$historyId$nonce".getBytes(Charsets.Utf8), 0)
+    }
+
+    def run(client: Client, priorities: Seq[Int], isolations: Seq[IsolationType], nonce: String) = {
 
       case class Ex(cmd: Command, previous: Option[Ex], done: Promise[Unit])
 
@@ -121,10 +124,27 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
           e
         }
 
-      case class Tx(idx: Int, priority: Int, isolation: IsolationType, cmds: Seq[Ex])
+      case class Tx(idx: Int, priority: Int, isolation: IsolationType, cmds: Seq[Ex], commit: Ex)
+
+      def txCmds(txId: Int) = plan.filter {
+        case Ex(Command(Commit, id), _, _) if(id == txId) => false
+        case Ex(Command(cmd, id), _, _) if(id == txId) => true
+        case _ => false
+      }
+      def txCommit(txId: Int) = plan.filter {
+        case Ex(Command(Commit, id), _, _) if(id == txId) => true
+        case Ex(Command(cmd, id), _, _) if(id == txId) => false
+        case _ => false
+      }.head
 
       val txs = for(i <- 0 until priorities.size) yield {
-        Tx(i+1, priorities(i), isolations(i), plan.filter(_.cmd.txIdx == i+1))
+        Tx(
+          i+1,
+          priorities(i),
+          isolations(i),
+          txCmds(i+1),
+          txCommit(i+1)
+        )
       }
 
       txs.foreach { tx =>
@@ -132,18 +152,29 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
       }
 
       val results = txs.map { tx =>
-        client.tx(tx.isolation, priority = Some(tx.priority)) { txClient =>
-          Future.collect(tx.cmds.map { case Ex(cmd, previous, done) =>
+        var tried = false
+        val txn = client.tx(tx.isolation, priority = Some(-tx.priority)) { txClient =>
+          if(tried == true) tx.commit.done.setDone
+          tried = true
+          val c = Future.collect(tx.cmds.map { case Ex(cmd, previous, done) =>
             previous.foreach { p =>
               println(s"$cmd waiting for ${p.cmd}")
             }
             for {
               _ <- previous.map(_.done).getOrElse(Future.Done)
               _ = println(s"tx${tx.idx} executing $cmd")
-              _ <- cmd(txClient, historyId) ensure { done.setDone }
+              _ <- cmd(txClient, historyId, nonce) ensure { done.setDone }
             } yield ()
           }) ensure { println(s"tx${tx.idx} done") }
+
+          // Wait for our commit's previous step to complete before commiting
+          c.flatMap { _ =>
+            tx.commit.previous.map(_.done).getOrElse(Future.Done)
+          }
         }
+
+        // Signal that our commit is complete
+        txn.ensure { tx.commit.done.setDone }
       }
       Future
         .collect(results)
@@ -155,11 +186,12 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     }
 
     override def toString(): String = {
-      cmds.mkString(" ")
+      f"$historyId%3d: [${cmds.mkString(" ")}]"
     }
   }
   object History {
-    var id: Int = 0
+    // Start with a random value so that we don't reuse the same cells across test runs against the same cluster.
+    var id: Int = math.abs(scala.util.Random.nextInt())
     def nextId: Int = {
       id += 1
       id
@@ -193,8 +225,9 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val symmetric = notSymmetric.take(3)
 
     val histories = History(Seq("I(A) C", "I(A) C"))
-    enumerateHistories(histories, false).map(_.toString).toSet should be(notSymmetric.toSet)
-    enumerateHistories(histories, true).map(_.toString).toSet should be(symmetric.toSet)
+
+    enumerateHistories(histories, false).map { _.cmds.mkString(" ") }.sorted should be(notSymmetric.sorted)
+    enumerateHistories(histories, true).map { _.cmds.mkString(" ") }.sorted should be(symmetric.sorted)
   }
 
   "Tx Correctness" should "inconsistent analysis anomaly" in withClient { client =>
@@ -214,10 +247,11 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
         history <- histories
       } yield {
         Await.result {
+          val nonce = scala.util.Random.alphanumeric.take(20).mkString
           for {
-            s <- history.run(client, priority, isolation)
+            s <- history.run(client, priority, isolation, nonce)
             _ = println(s)
-            r <- client.increment(s"A${history.historyId}".getBytes(Charsets.Utf8), 0)
+            r <- history.read(client, "A", nonce)
           } yield {
             r should be(2)
           }
