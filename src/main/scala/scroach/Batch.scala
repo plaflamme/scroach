@@ -117,6 +117,7 @@ trait BatchClient {
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Batch[Long]
   // Would require a Spool in terms of Batch to allow scanning in batches. So this is just a single scan request
   def scan(from: Bytes, to: Bytes, maxResults: Long = Long.MaxValue): Batch[Seq[(Bytes, Bytes)]]
+  def scanCounters(from: Bytes, to: Bytes, maxResults: Long = Long.MaxValue): Batch[Seq[(Bytes, Long)]]
 
   def run[A](batch: Batch[A]): Future[A]
 }
@@ -187,16 +188,20 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     }
   }
 
-  def scan(from: Bytes, to: Bytes, maxResults: Long): Batch[Seq[(Bytes, Bytes)]] = {
+  def scan(from: Bytes, to: Bytes, maxResults: Long): Batch[Seq[(Bytes, Bytes)]] = scan(from, to, maxResults, ResponseHandlers.scan)
+  def scanCounters(from: Bytes, to: Bytes, maxResults: Long): Batch[Seq[(Bytes, Long)]] = scan(from, to, maxResults, ResponseHandlers.scanCounters)
+
+  private[this] def scan[T](from: Bytes, to: Bytes, maxResults: Long, handler: (ScanResponse) => Seq[(Bytes, T)]): Batch[Seq[(Bytes, T)]] = {
     require(from <= to, "from should be less or equal to") // TODO: should from be strictly less than to?
 
     if(from == to) Batch.const(Seq.empty)
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
       val req = ScanRequest(header = h, maxResults = Some(maxResults))
-      batch(req, _.value.scan, ResponseHandlers.scan)
+      batch(req, _.value.scan, handler)
     }
   }
+
 
   def run[A](batch: Batch[A]): Future[A] = {
     batch.run { input =>

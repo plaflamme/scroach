@@ -46,6 +46,11 @@ private[scroach] object ResponseHandlers {
       case KeyValue(key, Some(BytesValue(Some(bytes)))) => (key.toByteArray, bytes)
     }
   }
+  val scanCounters = handler[ScanResponse, Seq[(Bytes, Long)]] {
+    case ScanResponse(NoError(_), rows) => rows.collect {
+      case KeyValue(key, Some(CounterValue(Some(value)))) => (key.toByteArray, value)
+    }
+  }
 }
 
 object Scroach extends App {

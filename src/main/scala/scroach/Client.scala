@@ -20,6 +20,7 @@ trait BaseClient {
   def delete(key: Bytes): Future[Unit]
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Future[Long]
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
+  def scanCounters(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Long)]]
   def batched: BatchClient
 }
 trait TxClient extends BaseClient
@@ -91,17 +92,20 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     }
   }
 
-  def scan(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Bytes)]] = {
+  def scan(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Bytes)]] = scan(from, to, batchSize, ResponseHandlers.scan)
+  def scanCounters(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Long)]] = scan(from, to, batchSize, ResponseHandlers.scanCounters)
+
+  private[this] def scan[T](from: Bytes, to: Bytes, batchSize: Int, handler: (ScanResponse) => Seq[(Bytes, T)]): Future[Spool[(Bytes, T)]] = {
     require(batchSize > 0, "batchSize must be > 0")
 
     // TODO: lazy scan
-    val spool = new SpoolSource[(Bytes, Bytes)]()
+    val spool = new SpoolSource[(Bytes, T)]()
     def scanBatch(start: Bytes): Future[Unit] = {
       val scan = if(start >= to) Future.value(Seq.empty)
       else {
         val h = header(start).withEndKey(ByteString.copyFrom(to))
         val req = ScanRequest(header = h, maxResults = Some(batchSize))
-        kv.scanEndpoint(req).map(ResponseHandlers.scan)
+        kv.scanEndpoint(req).map(handler)
       }
       scan.flatMap { values =>
         if(values.nonEmpty) {
