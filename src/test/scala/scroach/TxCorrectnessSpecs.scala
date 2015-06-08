@@ -87,9 +87,14 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   // A Cmd within a transaction within a history
   case class TxCmd(cmd: Cmd, txId: Int) {
 
-    def execute(txClient: TxClient, uniqKey: (String) => Bytes, state: TxState): Future[TxState] = cmd match {
-      case Read(k) => txClient.get(uniqKey(k)).map(_ => state)
-      case Incr(k) => txClient.increment(uniqKey(k), 1).map(_ => state)
+    def execute(txClient: TxClient, uniqKey: Bijection[String, Bytes], state: TxState): Future[TxState] = cmd match {
+      case Read(k) => txClient.getCounter(uniqKey(k)).map(value => state ++ value.map { v => Map(k -> v) }.getOrElse(Map.empty))
+      case Incr(k) => txClient.increment(uniqKey(k), 1).map(value => state ++ Map(k -> value))
+      case Scan(from, to) => txClient.scanCounters(uniqKey(from), uniqKey(to)).flatMap { _.toSeq }.map { values =>
+        state ++ values.map { case(k,v) => uniqKey.invert(k) -> v }.toMap
+      }
+      case Delete(from, to) => txClient.deleteRange(uniqKey(from), uniqKey(to)).map(_ => state)
+      case Sum(k) => { txClient.put(uniqKey(k), state.values.sum).map { _ => state } }
       case Commit => Future.value(state)
     }
 
@@ -113,7 +118,10 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     // So that the test keys are unique between runs in the same cluster
     private[this] val nonce = scala.util.Random.alphanumeric.take(20).mkString
 
-    def uniqKey(key: String) = s"$key${history.id}$nonce".getBytes(Charsets.Utf8)
+    val uniqKey: Bijection[String, Bytes] = new Bijection[String, Bytes] {
+      def apply(b: String)  = s"$key/${history.id}$nonce".getBytes(Charsets.Utf8)
+      def invert(a: Bytes) = new String(a, Charsets.Utf8).split("/").head
+    }
 
     override def toString(): String = {
       val txStr = (isolationLevels zip priorities).zipWithIndex map { case((i,p), id) =>
