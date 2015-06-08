@@ -217,9 +217,8 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val tx = List(Incr("A"), Commit)
 
     Verifier(client, List(tx, tx), BothIsolations, false) { case(testCase, results) =>
-      // TODO: read counters
-      client.increment(testCase.uniqKey("A"), 0) map { r =>
-        r should be(2)
+      client.getCounter(testCase.uniqKey("A")) map { r =>
+        r.get should be(2)
       }
     }
   }

@@ -24,6 +24,10 @@ private[scroach] object ResponseHandlers {
     case GetResponse(_, Some(BytesValue(bytes))) => bytes
     case GetResponse(NoError(_), None) => None
   }
+  val getCounter = handler[GetResponse, Option[Long]] {
+    case GetResponse(_, Some(CounterValue(counter))) => counter
+    case GetResponse(NoError(_), None) => None
+  }
   val put = noOpHandler[PutResponse]
   val cas: ConditionalPutResponse => Unit = {
     case ConditionalPutResponse(ConditionFailed(ConditionFailedError(actual))) => throw ConditionFailedException(actual.map(_.getBytes).map(_.toByteArray))

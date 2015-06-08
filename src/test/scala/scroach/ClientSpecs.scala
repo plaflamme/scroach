@@ -329,26 +329,24 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
           inner <- txClient.get(key)
           outer <- client.get(key)
         } yield {
-          inner should be ('defined)
-          inner.get should equal (value)
+          inner.value should equal (value)
           outer should be ('empty)
           inner
         }
       }
       got <- client.get(key)
     } yield {
-      got should be ('defined)
-      got.get should equal (value)
+      got.value should equal (value)
     }
   }
-/* Re-enable when we implement get for counters
+
   it should "handle serializable isolation" in withClient { client =>
 
     def readWrite(k: Bytes, o: Bytes) = {
       client.tx() { txClient =>
         for {
-          vo <- txClient.contains(o)// TODO: read counters
-          vk = if(vo) 2 else 1
+          vo <- txClient.getCounter(o)
+          vk = (vo.getOrElse(0l) + 1)
           _ <- txClient.increment(k, vk)
         } yield vk
       }
@@ -366,7 +364,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       if(valueAtK2 == 1) valueAtK1 should equal(2)
     }
   }
-*/
+
   "BatchClient" should "handle get" in withBatchClient { client =>
     Batch.collect(Seq(client.get(randomBytes), client.get(randomBytes)))
       .map { gots =>

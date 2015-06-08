@@ -12,6 +12,7 @@ import cockroach.proto._
 // TODO: handle timestamps. Potentially wrap Value into a a union?
 trait BaseClient {
   def get(key: Bytes): Future[Option[Bytes]]
+  def getCounter(key: Bytes): Future[Option[Long]]
   def put(key: Bytes, value: Bytes): Future[Unit]
   def put(key: Bytes, value: Long): Future[Unit]
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit]
@@ -39,6 +40,12 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     val req = GetRequest(header = header(key))
     kv.getEndpoint(req)
       .map { ResponseHandlers.get }
+  }
+
+  def getCounter(key: Bytes): Future[Option[Long]] = {
+    val req = GetRequest(header = header(key))
+    kv.getEndpoint(req)
+      .map { ResponseHandlers.getCounter }
   }
 
   def put(key: Bytes, value: Bytes): Future[Unit] = {

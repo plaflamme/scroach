@@ -108,6 +108,7 @@ object Batch {
 
 trait BatchClient {
   def get(key: Bytes): Batch[Option[Bytes]]
+  def getCounter(key: Bytes): Batch[Option[Long]]
   def put(key: Bytes, value: Bytes): Batch[Unit]
   def put(key: Bytes, value: Long): Batch[Unit]
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Batch[Unit]
@@ -139,6 +140,10 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
 
   def get(key: Bytes): Batch[Option[Bytes]] = {
     batch(GetRequest(header = header(key)), _.value.get, ResponseHandlers.get)
+  }
+
+  def getCounter(key: Bytes): Batch[Option[Long]] = {
+    batch(GetRequest(header = header(key)), _.value.get, ResponseHandlers.getCounter)
   }
 
   def put(key: Bytes, value: Bytes): Batch[Unit] = {

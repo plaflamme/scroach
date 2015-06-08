@@ -26,6 +26,15 @@ package object proto {
       }
     }
   }
+  object CounterValue {
+    def unapply(value: Value): Option[Option[Long]] = {
+      value match {
+        case Value(_, _, _, Value.Valiu.Integer(v)) => Some(Some(v))
+        case Value(_, _, _, Value.Valiu.Empty) => Some(None)
+        case _ => None
+      }
+    }
+  }
 
   /**
    * Matches the header of a response that has no error set
