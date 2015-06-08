@@ -218,7 +218,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
     Verifier(client, List(tx, tx), BothIsolations, false) { case(testCase, results) =>
       client.getCounter(testCase.uniqKey("A")) map { r =>
-        r.get should be(2)
+        r.value should be(2)
       }
     }
   }

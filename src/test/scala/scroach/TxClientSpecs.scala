@@ -69,7 +69,7 @@ class TxClientSpecs extends ScroachSpec {
               Future.value(EndTransactionResponse(header = ResponseHeader(error = Some(txAbortError(respTx)), txn = Some(respTx))))
             } else {
               // Client is expected to use the provided tx priority for future transactions
-              txn.priority should be(Some(4))
+              txn.priority.value should be(4)
               val respTx = txn.copy(id = Some(ByteString.copyFromUtf8("tx-id2")), timestamp = Some(timestamp(10, 0)))
               Future.value(EndTransactionResponse(header = ResponseHeader(txn = Some(respTx))))
             }

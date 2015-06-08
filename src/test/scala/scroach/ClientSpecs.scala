@@ -120,9 +120,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       _ <- client.put(key, value)
       got <- client.get(key)
     } yield {
-      // TODO: factor these two lines out (custom matcher?)
-      got should be ('defined)
-      got.get should equal (value)
+      got.value should equal (value)
     }
   }
 
@@ -174,10 +172,8 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
       _ <- client.compareAndSet(key, Some(second), None)
       isNone <- client.get(key)
     } yield {
-      isFirst should be ('defined)
-      isFirst.get should equal(first)
-      isSecond should be ('defined)
-      isSecond.get should equal(second)
+      isFirst.value should equal(first)
+      isSecond.value should equal(second)
       isNone should be ('empty)
     }
   }
@@ -294,11 +290,9 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
         got <- client.get(key)
       } yield {
         if (test.canPush || test.method == Get) {
-          got should be('defined)
-          got.map(new String(_)).get should equal(new String(txValue))
+          got.map(new String(_)).value should equal(new String(txValue))
         } else {
-          got should be('defined)
-          got.map(new String(_)).get should equal(new String(nonTxValue))
+          got.map(new String(_)).value should equal(new String(nonTxValue))
         }
         count should be (test.expectAttempts)
       }
