@@ -119,8 +119,8 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     private[this] val nonce = scala.util.Random.alphanumeric.take(20).mkString
 
     val uniqKey: Bijection[String, Bytes] = new Bijection[String, Bytes] {
-      def apply(b: String)  = s"$key/${history.id}$nonce".getBytes(Charsets.Utf8)
-      def invert(a: Bytes) = new String(a, Charsets.Utf8).split("/").head
+      def apply(key: String)  = s"$nonce/${history.id}/$key".getBytes(Charsets.Utf8)
+      def invert(bytes: Bytes) = new String(bytes, Charsets.Utf8).split("/").last
     }
 
     override def toString(): String = {
@@ -134,7 +134,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   object Planner {
-    def apply(cmds: List[List[Cmd]], isolationLevels: Seq[IsolationType], symmetric: Boolean): Seq[TestCase] = {
+    def apply(cmds: Seq[Seq[Cmd]], isolationLevels: Seq[IsolationType], symmetric: Boolean): Seq[TestCase] = {
       val txns = cmds
         .zipWithIndex
         .map { case(cmds, id) =>
@@ -207,7 +207,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   object Verifier {
-    def apply(client: Client, txs: List[List[Cmd]], isolations: Seq[IsolationType], symmetric: Boolean)(f: (TestCase, Seq[Try[TxState]]) => Future[Unit]) = {
+    def apply(client: Client, txs: Seq[Seq[Cmd]], isolations: Seq[IsolationType], symmetric: Boolean)(f: (TestCase, Seq[Try[TxState]]) => Future[Unit]) = {
       Planner(txs, isolations, symmetric)
         .foldLeft(Future.Done) { case(previous, testCase) =>
           for {
@@ -221,13 +221,90 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     }
   }
 
-  "Tx Correctness" should "handle no anomaly" in withClient { client =>
+  // TODO: until we can change the test cluster's settings, we need to rely on tx timeouts
+  // https://github.com/cockroachdb/cockroach/issues/877
+  import com.twitter.conversions.time._
+  override val TestCaseTimeout = 5.minutes
+
+  "Transaction Correctness" should "handle no anomaly" in withClient { client =>
+
     val tx = List(Incr("A"), Commit)
 
     Verifier(client, List(tx, tx), BothIsolations, false) { case(testCase, results) =>
+      results.forall(_.isReturn) shouldBe true
       client.getCounter(testCase.uniqKey("A")) map { r =>
         r.value should be(2)
       }
     }
   }
+
+  it should "handle the inconsistent analysis anomaly" in withClient { client =>
+    val txn1 = Seq(Read("A"), Read("B"), Sum("C"), Commit)
+    val txn2 = Seq(Incr("A"), Incr("B"), Commit)
+
+    Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
+      results.forall(_.isReturn) shouldBe true
+      client.getCounter(testCase.uniqKey("C")) map { r =>
+        r should contain oneOf (2, 0)
+      }
+    }
+  }
+
+  it should "handle the lost update anomaly" in withClient { client =>
+    val txn = Seq(Read("A"), Incr("A"), Commit)
+
+    Verifier(client, Seq(txn, txn), BothIsolations, false) { case(testCase, results) =>
+      results.forall(_.isReturn) shouldBe true
+      client.getCounter(testCase.uniqKey("A")) map { r =>
+        r.value should be(2)
+      }
+    }
+  }
+
+  it should "handle the phantom read anomaly" in withClient { client =>
+    val txn1 = Seq(Scan("A", "C"), Sum("D"), Scan("A", "C"), Sum("E"), Commit)
+    val txn2 = Seq(Incr("B"), Commit)
+
+    Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
+      results.forall(_.isReturn) shouldBe true
+      for {
+        (d,e) <- client.getCounter(testCase.uniqKey("D")) join client.getCounter(testCase.uniqKey("E"))
+      } yield {
+        d.value should be(e.value)
+      }
+    }
+  }
+
+  it should "handle the phantom delete anomaly" in withClient { client =>
+    val txn1 = Seq(Delete("A", "C"), Scan("A", "C"), Sum("D"), Commit)
+    val txn2 = Seq(Incr("B"), Commit)
+
+    Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
+      results.forall(_.isReturn) shouldBe true
+      client.getCounter(testCase.uniqKey("D")) map { r =>
+        r.value should be(0)
+      }
+    }
+  }
+
+  it should "handle the write skew anomaly" in withClient { client =>
+    val txn1 = Seq(Scan("A", "C"), Incr("A"), Sum("A"), Commit)
+    val txn2 = Seq(Scan("A", "C"), Incr("B"), Sum("B"), Commit)
+
+    def verify(allowed: (Int, Int)*) = {
+      (testCase: TestCase, results: Seq[Try[TxState]]) => {
+        for {
+          (a, b) <- client.getCounter(testCase.uniqKey("A")) join client.getCounter(testCase.uniqKey("B"))
+        } yield {
+          allowed should contain ((a.value, b.value))
+        }
+      }
+    }
+
+    val serializable = Verifier(client, Seq(txn1, txn2), OnlySerializable, false)(verify((1,2), (2,1)))
+    val snapshot = Verifier(client, Seq(txn1, txn2), OnlySnapshot, false)(verify((1,2), (2,1), (1,1)))
+
+    serializable join snapshot
+  }
+
 }
