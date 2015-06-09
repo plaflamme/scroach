@@ -19,5 +19,7 @@ libraryDependencies ++= Seq(
   "org.scalacheck" %% "scalacheck" % "1.12.1" % "test"
 )
 
+testOptions in Test += Tests.Argument("-l", "SlowTest")
+
 fork in run := true
 

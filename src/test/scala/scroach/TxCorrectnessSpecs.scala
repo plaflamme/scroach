@@ -3,6 +3,7 @@ package scroach
 import cockroach.proto.IsolationType
 import com.twitter.io.Charsets
 import com.twitter.util._
+import org.scalatest.Tag
 
 class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
@@ -225,20 +226,9 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   // https://github.com/cockroachdb/cockroach/issues/877
   import com.twitter.conversions.time._
   override val TestCaseTimeout = 5.minutes
+  object SlowTest extends Tag("SlowTest")
 
-  "Transaction Correctness" should "handle no anomaly" in withClient { client =>
-
-    val tx = List(Incr("A"), Commit)
-
-    Verifier(client, List(tx, tx), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
-      client.getCounter(testCase.uniqKey("A")) map { r =>
-        r.value should be(2)
-      }
-    }
-  }
-
-  it should "handle the inconsistent analysis anomaly" in withClient { client =>
+  "TxClient" should "handle the inconsistent analysis anomaly" taggedAs(SlowTest) in withClient { client =>
     val txn1 = Seq(Read("A"), Read("B"), Sum("C"), Commit)
     val txn2 = Seq(Incr("A"), Incr("B"), Commit)
 
@@ -250,7 +240,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     }
   }
 
-  it should "handle the lost update anomaly" in withClient { client =>
+  it should "handle the lost update anomaly" taggedAs(SlowTest) in withClient { client =>
     val txn = Seq(Read("A"), Incr("A"), Commit)
 
     Verifier(client, Seq(txn, txn), BothIsolations, false) { case(testCase, results) =>
@@ -261,7 +251,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     }
   }
 
-  it should "handle the phantom read anomaly" in withClient { client =>
+  it should "handle the phantom read anomaly" taggedAs(SlowTest)in withClient { client =>
     val txn1 = Seq(Scan("A", "C"), Sum("D"), Scan("A", "C"), Sum("E"), Commit)
     val txn2 = Seq(Incr("B"), Commit)
 
@@ -287,7 +277,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     }
   }
 
-  it should "handle the write skew anomaly" in withClient { client =>
+  it should "handle the write skew anomaly" taggedAs(SlowTest)in withClient { client =>
     val txn1 = Seq(Scan("A", "C"), Incr("A"), Sum("A"), Commit)
     val txn2 = Seq(Scan("A", "C"), Incr("B"), Sum("B"), Commit)
 
