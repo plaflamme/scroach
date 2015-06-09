@@ -64,8 +64,8 @@ Currently, the richer client api looks like this:
 trait Client {
   type Bytes = Array[Byte]
   
-  def contains(key: Bytes): Future[Boolean]
   def get(key: Bytes): Future[Option[Bytes]]
+  def getCounters(key: Bytes): Future[Option[Bytes]]
   def put(key: Bytes, value: Bytes): Future[Unit]
   def put(key: Bytes, value: Long): Future[Unit]
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit]
@@ -73,8 +73,7 @@ trait Client {
   def delete(key: Bytes): Future[Unit]
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Future[Long]
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
-  def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
-  def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
+  def scanCounters(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Long)]]
   def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE)(f: Kv => Future[T]): Future[T]
 }
 ```
