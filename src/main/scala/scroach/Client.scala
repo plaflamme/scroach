@@ -1,17 +1,18 @@
 package scroach
 
+import scroach.proto._
 import com.google.protobuf.ByteString
 import com.twitter.concurrent.{SpoolSource, Spool}
 import com.twitter.finagle.service.Backoff
-import com.twitter.util.{Duration, Future}
+import com.twitter.util.{Throw, Return, Duration, Future}
 import com.twitter.conversions.time._
-import scroach.proto._
+import cockroach.proto._
 
 // TODO: handle bytes vs. counter values. For example get for a counter would return Future[Long]
 // TODO: handle timestamps. Potentially wrap Value into a a union?
 trait BaseClient {
-  def contains(key: Bytes): Future[Boolean]
   def get(key: Bytes): Future[Option[Bytes]]
+  def getCounter(key: Bytes): Future[Option[Long]]
   def put(key: Bytes, value: Bytes): Future[Unit]
   def put(key: Bytes, value: Long): Future[Unit]
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit]
@@ -19,13 +20,12 @@ trait BaseClient {
   def delete(key: Bytes): Future[Unit]
   def deleteRange(from: Bytes, to: Bytes, maxToDelete: Long = Long.MaxValue): Future[Long]
   def scan(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Bytes)]]
-  def enqueueMessage(key: Bytes, message: Bytes): Future[Unit]
-  def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]]
+  def scanCounters(from: Bytes, to: Bytes, bacthSize: Int = 256): Future[Spool[(Bytes, Long)]]
   def batched: BatchClient
 }
 trait TxClient extends BaseClient
 trait Client extends BaseClient {
-  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE, user: Option[String] = None, priority: Option[Int] = None)(f: TxClient => Future[T]): Future[T]
+  def tx[T](isolation: IsolationType = IsolationType.SERIALIZABLE, user: Option[String] = None, priority: Option[Int] = None)(f: TxClient => Future[T]): Future[T]
 }
 
 case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends Client {
@@ -37,24 +37,25 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     header().copy(key = Option(key).map(ByteString.copyFrom(_)))
   }
 
-  def contains(key: Bytes): Future[Boolean] = {
-    kv.containsEndpoint(ContainsRequest(header = header(key)))
-      .map { ResponseHandlers.contains }
-  }
-
   def get(key: Bytes): Future[Option[Bytes]] = {
     val req = GetRequest(header = header(key))
     kv.getEndpoint(req)
       .map { ResponseHandlers.get }
   }
 
+  def getCounter(key: Bytes): Future[Option[Long]] = {
+    val req = GetRequest(header = header(key))
+    kv.getEndpoint(req)
+      .map { ResponseHandlers.getCounter }
+  }
+
   def put(key: Bytes, value: Bytes): Future[Unit] = {
-    val req = PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value)))))
+    val req = PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(value)))))
     kv.putEndpoint(req).map { ResponseHandlers.put }
   }
 
   def put(key: Bytes, value: Long): Future[Unit] = {
-    val req = PutRequest(header = header(key), value = Some(Value(integer = Some(value))))
+    val req = PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Integer(value))))
     kv.putEndpoint(req).map { ResponseHandlers.put }
   }
 
@@ -64,14 +65,14 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     // value is required, how do you compare-and-delete?
     val req = ConditionalPutRequest(
       header = header(key),
-      expValue = previous.map(p => Value(bytes = Some(ByteString.copyFrom(p)))),
-      value = Value(bytes = value.map(ByteString.copyFrom(_)))
+      expValue = previous.map(p => Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(p)))),
+      value = Some(Value(valiu = value.map(v => Value.Valiu.Bytes(ByteString.copyFrom(v))).getOrElse(Value.Valiu.Empty)))
     )
     kv.casEndpoint(req).map { ResponseHandlers.cas }
   }
 
   def increment(key: Bytes, amount: Long): Future[Long] = {
-    val req = IncrementRequest(header = header(key), increment = amount)
+    val req = IncrementRequest(header = header(key), increment = Some(amount))
     kv.incrementEndpoint(req).map { ResponseHandlers.increment }
   }
 
@@ -86,22 +87,25 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     if(maxToDelete == 0) Future.value(0) // short-circuit
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
-      val req = DeleteRangeRequest(header = h, maxEntriesToDelete = maxToDelete)
+      val req = DeleteRangeRequest(header = h, maxEntriesToDelete = Some(maxToDelete))
       kv.deleteRangeEndpoint(req).map { ResponseHandlers.deleteRange }
     }
   }
 
-  def scan(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Bytes)]] = {
+  def scan(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Bytes)]] = scan(from, to, batchSize, ResponseHandlers.scan)
+  def scanCounters(from: Bytes, to: Bytes, batchSize: Int): Future[Spool[(Bytes, Long)]] = scan(from, to, batchSize, ResponseHandlers.scanCounters)
+
+  private[this] def scan[T](from: Bytes, to: Bytes, batchSize: Int, handler: (ScanResponse) => Seq[(Bytes, T)]): Future[Spool[(Bytes, T)]] = {
     require(batchSize > 0, "batchSize must be > 0")
 
     // TODO: lazy scan
-    val spool = new SpoolSource[(Bytes, Bytes)]()
+    val spool = new SpoolSource[(Bytes, T)]()
     def scanBatch(start: Bytes): Future[Unit] = {
-      val scan = if(from >= to) Future.value(Seq.empty)
+      val scan = if(start >= to) Future.value(Seq.empty)
       else {
-        val h = header(start).copy(endKey = Some(ByteString.copyFrom(to)))
-        val req = ScanRequest(header = h, maxResults = batchSize)
-        kv.scanEndpoint(req).map(ResponseHandlers.scan)
+        val h = header(start).withEndKey(ByteString.copyFrom(to))
+        val req = ScanRequest(header = h, maxResults = Some(batchSize))
+        kv.scanEndpoint(req).map(handler)
       }
       scan.flatMap { values =>
         if(values.nonEmpty) {
@@ -114,54 +118,42 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
       }
     }
 
-    scanBatch(from)
-    spool()
-  }
-
-  def reapQueue(key: Bytes, maxItems: Int): Future[Seq[Bytes]] = {
-    require(maxItems > 0, "maxItems must be > 0")
-    val req = ReapQueueRequest(header = header(key), maxResults = maxItems.toLong)
-    kv.reapQueueEndpoint(req).map { ResponseHandlers.reapQueue }
-  }
-
-  def enqueueMessage(key: Bytes, message: Bytes): Future[Unit] = {
-    val req = EnqueueMessageRequest(header = header(key), msg = Value(bytes = Some(ByteString.copyFrom(message))))
-    kv.enqueueEndpoint(req).map { ResponseHandlers.enqueueMessage }
+    val s = spool()
+    scanBatch(from) onFailure spool.raise
+    s
   }
 
   // Exponential backoff from 50.ms to 3600.ms then constant 5.seconds
   private[this] val DefaultBackoffs = Backoff.exponential(50.milliseconds, 2).take(6) ++ Backoff.const(5.seconds)
 
-  def tx[T](isolation: IsolationType.EnumVal = IsolationType.SERIALIZABLE, txUser: Option[String] = None, priority: Option[Int] = priority)(f: TxClient => Future[T]): Future[T] = {
+  def tx[T](isolation: IsolationType = IsolationType.SERIALIZABLE, txUser: Option[String] = None, priority: Option[Int] = priority)(f: TxClient => Future[T]): Future[T] = {
     val txKv = TxKv(kv, isolation = isolation)
     val txClient = new KvClient(txKv, txUser getOrElse user, priority) with TxClient
 
+    def endTx(commit: Boolean) = {
+      val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
+      val endTxRequest = EndTransactionRequest(header = header, commit = Some(commit))
+      txKv.endTxEndpoint(endTxRequest)
+        .map {
+          case EndTransactionResponse(NoError(_), _, _) => ()
+          case response@EndTransactionResponse(HasError(err), _, _) => throw new CockroachException(err, response)
+        }
+    }
+
     def tryTx(backoffs: Stream[Duration]): Future[T] = {
       f(txClient)
-        .rescue {
-          case CockroachException(err, _) if(err.readWithinUncertaintyInterval.isDefined) => tryTx(DefaultBackoffs)
+        .flatMap { result =>
+          endTx(true).map { _ => result }
         }
         .liftToTry
-        .flatMap { result =>
-          // TODO: this has the wrong header. It needs to use the header of the KvClient inside the tx.
-          // We may need to change the signature of tx to take a Client => Future[T] so we can control this
-          val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
-          val endTxRequest = EndTransactionRequest(header = header, commit = Some(result.isReturn))
-          txKv.endTxEndpoint(endTxRequest)
-            .map {
-              case EndTransactionResponse(NoError(_), _) => TxComplete
-              case EndTransactionResponse(HasError(err), _) if(err.transactionRetry.isDefined) => TxRetry
-              case EndTransactionResponse(HasError(err), _) if(err.transactionAborted.isDefined || err.transactionPush.isDefined) => TxAbort
-            }
-            .map { tx: TxResult => tx -> result } // Typing tx as TxResult helps the compiler with the pattern match below
-        }
         .flatMap {
-          case (TxComplete, result) => Future.const(result)
-          case (TxRetry, _) => tryTx(DefaultBackoffs)
-          case (TxAbort, _) => backoffs match {
+          case Return(result) => Future.value(result)
+          case Throw(CockroachException(err, response)) if(err.getTransactionRestart == TransactionRestart.IMMEDIATE) => tryTx(DefaultBackoffs)
+          case Throw(CockroachException(err, response)) if(err.getTransactionRestart == TransactionRestart.BACKOFF) => backoffs match {
             case howlong #:: rest => Future sleep(howlong) before tryTx(rest)
             case _ => Future.exception(new RuntimeException) // This should never happen since the backoff stream is unbounded.
           }
+          case Throw(t) => endTx(false) before Future.exception(t)
         }
     }
 

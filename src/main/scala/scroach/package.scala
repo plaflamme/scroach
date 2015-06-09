@@ -8,11 +8,6 @@ package object scroach {
 
   private[scroach] implicit val Timer = new JavaTimer(isDaemon = true)
 
-  sealed trait TxResult
-  case object TxComplete extends TxResult
-  case object TxAbort extends TxResult
-  case object TxRetry extends TxResult
-
   type Bytes = Array[Byte]
 
   val ByteZero = 0x00.toByte

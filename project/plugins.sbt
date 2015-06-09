@@ -4,5 +4,4 @@ resolvers += Resolver.url("plaflamme-sbt-plugin-releases", url("http://dl.bintra
 
 addSbtPlugin("me.lessis" % "bintray-sbt" % "0.1.2")
 
-addSbtPlugin("com.github.sbt" %% "sbt-scalabuff" % "1.3.9-1")
-
+addSbtPlugin("com.trueaccord.scalapb" % "sbt-scalapb" % "0.4.15")

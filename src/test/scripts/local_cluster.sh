@@ -19,8 +19,8 @@ DNSMASQ_NAME="${HOSTNAME:-local}-cockroach-dns"
 COCKROACH_NAME="${HOSTNAME:-local}-roachnode"
 
 # Determine running containers.
-CONTAINERS_RUN=$(docker ps | egrep -e '-roachnode|-cockroach-dns' | awk '{print $1}')
-CONTAINERS=$(docker ps -a | egrep -e '-roachnode|-cockroach-dns' | awk '{print $1}')
+CONTAINERS_RUN=$(docker ps | egrep -e '-roachnode|-cockroach-dns|cockroach-init|cockroach-certs' | awk '{print $1}')
+CONTAINERS=$(docker ps -a | egrep -e '-roachnode|-cockroach-dns|cockroach-init|cockroach-certs' | awk '{print $1}')
 
 # Parse [start|stop] directive.
 if [[ $1 == "start" ]]; then
@@ -33,9 +33,8 @@ elif [[ $1 == "stop" ]]; then
   if [[ $CONTAINERS == "" ]]; then
     exit 0
   fi
-  echo "Stopping and removing containers..."
+  echo "Stopping containers..."
   docker kill $CONTAINERS > /dev/null
-  docker rm $CONTAINERS > /dev/null
   exit 0
 else
   echo "Usage: $0 [start|stop]"
@@ -43,7 +42,11 @@ else
 fi
 
 # Make sure to clean up any remaining containers
-$0 stop
+./$(basename $0) stop
+# Doing this here only so that after a cluster has been started and stopped,
+# the containers are still available for debugging.
+echo "Removing any old containers..."
+docker rm -f $CONTAINERS &> /dev/null
 
 # Default number of nodes.
 NODES=${NODES:-3}
@@ -69,6 +72,17 @@ function finish {
 }
 trap finish EXIT
 
+# Shell script cleanup for failure.
+function fail {
+  docker kill ${CIDS[*]} > /dev/null
+  docker rm -v ${CIDS[*]} > /dev/null
+  docker kill $DNS_CID > /dev/null
+  docker rm -v $DNS_CID > /dev/null
+  docker rm -v cockroach-init > /dev/null
+  docker rm -v cockroach-certs > /dev/null
+  exit 1
+}
+
 # Create temporary file for DNS hosts.
 DNS_DIR=$(mktemp -d "/tmp/dnsmasq.hosts.XXXXXXXX" || exit 1)
 DNS_FILE="$DNS_DIR/addn-hosts"
@@ -79,29 +93,43 @@ DNS_CID=$(docker run -d -v "$DNS_DIR:/dnsmasq.hosts" --name=$DNSMASQ_NAME $DNSMA
 DNS_IP=$(docker inspect --format '{{ .NetworkSettings.IPAddress }}' $DNS_CID)
 echo "* ${DNSMASQ_NAME}"
 
-# Local rpc and http ports.
-RPC_PORT=9000
-HTTP_PORT=8080
+# Local ports.
+PORT=8080
+
+# Start a data volume node for shared data.
+CERTS_DIR="/certs"
+CERTS_NAME="cockroach-certs"
+NODE_ADDRESSES=""
+for i in $(seq 1 $NODES); do
+  NODE_ADDRESSES="${NODE_ADDRESSES} ${COCKROACH_NAME}${i}.local"
+done
+
+# Generate certs.
+docker run -v ${CERTS_DIR} --name=${CERTS_NAME} ${COCKROACH_IMAGE} cert create-ca --certs=${CERTS_DIR} 2> /dev/null
+docker run --rm --volumes-from=${CERTS_NAME} ${COCKROACH_IMAGE} cert create-node --certs=${CERTS_DIR} ${NODE_ADDRESSES} 2> /dev/null
 
 # Start all nodes.
 for i in $(seq 1 $NODES); do
   HOSTS[$i]="$COCKROACH_NAME$i.local"
+  VOL="/data$i"
 
-  # If this is the first node, command is init; otherwise start.
-  CMD="start"
-  if [[ $i == 1 ]]; then
-    CMD="init"
-  fi
   # Command args specify two data directories per instance to simulate two physical devices.
-  CMD_ARGS="-gossip=${HOSTS[1]}:$RPC_PORT -stores=hdd=/tmp/disk1,hdd=/tmp/disk2 -rpc=${HOSTS[$i]}:$RPC_PORT -http=${HOSTS[$i]}:$HTTP_PORT"
-
+  START_ARGS="--gossip=${HOSTS[1]}:$PORT --stores=ssd=$VOL --addr=${HOSTS[$i]}:$PORT --certs=${CERTS_DIR}"
+  # Log (almost) everything.
+  #START_ARGS="${START_ARGS} -v 7"
   # Node-specific arguments for node container.
-  NODE_ARGS="--hostname=${HOSTS[$i]} --name=${HOSTS[$i]} --dns=$DNS_IP"
+  NODE_ARGS="--hostname=${HOSTS[$i]} --volumes-from=${CERTS_NAME} --name=${HOSTS[$i]} --dns=$DNS_IP"
+
+  # If this is the first node, initialize the cluster first.
+  if [[ $i == 1 ]]; then
+      docker run -v $VOL --volumes-from=${CERTS_NAME} --name=cockroach-init $COCKROACH_IMAGE init --stores=ssd=$VOL 2> /dev/null
+      NODE_ARGS="${NODE_ARGS} --volumes-from=cockroach-init"
+  fi
 
   # Start Cockroach docker container and corral HTTP port and docker
   # IP address for container-local DNS.
-  CIDS[$i]=$(docker run $STD_ARGS $NODE_ARGS $COCKROACH_IMAGE $CMD $CMD_ARGS)
-  HTTP_PORTS[$i]=$(echo $(docker port ${CIDS[$i]} 8080) | sed 's/.*://')
+  CIDS[$i]=$(docker run $STD_ARGS $NODE_ARGS $COCKROACH_IMAGE start $START_ARGS)
+  PORTS[$i]=$(echo $(docker port ${CIDS[$i]} 8080) | sed 's/.*://')
   IP=$(docker inspect --format '{{ .NetworkSettings.IPAddress }}' ${CIDS[$i]})
   IP_HOST[$i]="$IP ${HOSTS[$i]}"
   echo "* ${HOSTS[$i]}"
@@ -122,17 +150,36 @@ if [[ $DOCKERHOST != "127.0.0.1" ]]; then
   cat $DNS_FILE | boot2docker ssh "sudo -u root /bin/sh -c 'cat - > $DNS_FILE'"
 fi
 
-# Get gossip network contents from each node in turn.
+# Fetch the local status contents from node 1 and verify build information is present.
+LOCAL_URL="https://$DOCKERHOST:${PORTS[1]}/_status/local/"
+LOCAL=$(curl --noproxy '*' -k -s $LOCAL_URL)
+if [[ -z $LOCAL ]]; then
+	echo "Failed to fetch status from node 1 (${LOCAL_URL})"
+  docker logs ${CIDS[1]}
+  fail
+fi
+for key in 'goVersion' 'tag' 'time' 'dependencies'; do
+  if [[ -z $(echo $LOCAL | grep "\"$key\":") ]]; then
+      echo "Build var missing for '$key' in $LOCAL"
+      fail
+  fi
+  if [[ ! -z $(echo $LOCAL | grep "\"$key\": \"\"") ]]; then
+      echo "Build var not set for '$key' in $LOCAL"
+      fail
+  fi
+done
+
+# Get gossip network contents from each node in turn & verify node membership.
 echo -n "Waiting for complete gossip network of $((NODES*NODES)) peerings: "
 MAX_WAIT=20 # seconds
 for ATTEMPT in $(seq 1 $MAX_WAIT); do
   FOUND=0
   for i in $(seq 1 $NODES); do
     FOUND_NAMES=""
-    GOSSIP_URL="$DOCKERHOST:${HTTP_PORTS[$i]}/_status/gossip"
-    GOSSIP=$(curl --noproxy '*' -s $GOSSIP_URL)
+    GOSSIP_URL="https://$DOCKERHOST:${PORTS[$i]}/_status/gossip"
+    GOSSIP=$(curl --noproxy '*' -k -s -m 1 $GOSSIP_URL)
     for j in $(seq 1 $((2*NODES))); do
-      if [[ ! -z $(echo $GOSSIP | grep "node-$j") ]]; then
+      if [[ ! -z $(echo $GOSSIP | grep "node:$j") ]]; then
         FOUND=$((FOUND+1))
         FOUND_NAMES="$FOUND_NAMES node-$j"
       fi
@@ -144,7 +191,7 @@ for ATTEMPT in $(seq 1 $MAX_WAIT); do
     echo
     echo "All nodes verified in the cluster:"
     echo $FOUND_NAMES
-    echo "$DOCKERHOST:${HTTP_PORTS[$i]}"
+    echo "$DOCKERHOST:${PORTS[$i]}"
     exit 0
   fi
   sleep 1
@@ -166,8 +213,4 @@ echo "Output for dnsmasq..."
 echo "====================="
 docker logs $DNS_CID
 
-docker kill ${CIDS[*]} > /dev/null
-docker rm ${CIDS[*]} > /dev/null
-docker kill $DNS_CID > /dev/null
-docker rm $DNS_CID > /dev/null
-exit 1
+fail
