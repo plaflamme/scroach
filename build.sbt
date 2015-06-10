@@ -21,5 +21,7 @@ libraryDependencies ++= Seq(
 
 testOptions in Test += Tests.Argument("-l", "SlowTest")
 
+testOptions in Test += Tests.Setup { () => "src/test/scripts/local_cluster.sh start" ! }
+
 fork in run := true
 

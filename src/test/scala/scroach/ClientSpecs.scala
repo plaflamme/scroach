@@ -80,7 +80,7 @@ trait CockroachCluster extends BeforeAndAfterAll { self: Suite =>
     Option(instance.get()).foreach(_.close())
   }
 
-  val TestCaseTimeout = 30.seconds
+  val TestCaseTimeout = 1.minute
 
   def withKv(test: proto.Kv => Future[Any]) = {
     Await.result {

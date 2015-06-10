@@ -1,5 +1,6 @@
 scroach
 =======
+[![Circle CI](https://circleci.com/gh/plaflamme/scroach.svg?style=shield)](https://circleci.com/gh/plaflamme/scroach)
 
 Scala client for [CockroachDB](https://github.com/cockroachdb/cockroach/) using [Finagle](https://github.com/twitter/finagle/).
 
