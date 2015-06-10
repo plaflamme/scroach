@@ -209,16 +209,15 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
   object Verifier {
     def apply(client: Client, txs: Seq[Seq[Cmd]], isolations: Seq[IsolationType], symmetric: Boolean)(f: (TestCase, Seq[Try[TxState]]) => Future[Unit]) = {
-      Planner(txs, isolations, symmetric)
-        .foldLeft(Future.Done) { case(previous, testCase) =>
+      val cases = Planner(txs, isolations, symmetric)
+        .map { testCase =>
           for {
-            _ <- previous
-            _ = println(testCase)
             results <- Runner.run(client, testCase)
             _ <- f(testCase, results)
-            _ = println("========")
           } yield ()
         }
+
+      Future.collect(cases).unit
     }
   }
 
