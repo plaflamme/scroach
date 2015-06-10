@@ -112,7 +112,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   // A history is a sequence of interleaving TxCmd
-  case class History(id: Int, cmds: List[TxCmd])
+  case class History(cmds: List[TxCmd])
 
   // A TestCase is a single history with an isolation level and a priority for each of its transactions
   case class TestCase(history: History, isolationLevels: Seq[IsolationType], priorities: Seq[Int]) {
@@ -120,7 +120,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     private[this] val nonce = scala.util.Random.alphanumeric.take(20).mkString
 
     val uniqKey: Bijection[String, Bytes] = new Bijection[String, Bytes] {
-      def apply(key: String)  = s"$nonce/${history.id}/$key".getBytes(Charsets.Utf8)
+      def apply(key: String)  = s"$nonce/$key".getBytes(Charsets.Utf8)
       def invert(bytes: Bytes) = new String(bytes, Charsets.Utf8).split("/").last
     }
 
@@ -145,8 +145,8 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
         histories.flatMap { h =>
           interleave(h, c, symmetric)
         }
-      }.zipWithIndex.map { case(history, id) =>
-        History(id, history)
+      }.map { history =>
+        History(history)
       }
 
       val priorities = (for(i <- 1 to cmds.size) yield i).permutations.toSeq
