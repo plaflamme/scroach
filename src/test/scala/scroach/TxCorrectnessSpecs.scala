@@ -232,7 +232,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("A"), Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("C")) map { r =>
         r should contain oneOf (2, 0)
       }
@@ -243,7 +243,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn = Seq(Read("A"), Incr("A"), Commit)
 
     Verifier(client, Seq(txn, txn), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("A")) map { r =>
         r.value should be(2)
       }
@@ -255,7 +255,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       for {
         (d,e) <- client.getCounter(testCase.uniqKey("D")) join client.getCounter(testCase.uniqKey("E"))
       } yield {
@@ -269,7 +269,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("D")) map { r =>
         r.value should be(0)
       }
@@ -282,6 +282,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
     def verify(allowed: (Int, Int)*) = {
       (testCase: TestCase, results: Seq[Try[TxState]]) => {
+        results.filter(_.isThrow) shouldBe ('empty)
         for {
           (a, b) <- client.getCounter(testCase.uniqKey("A")) join client.getCounter(testCase.uniqKey("B"))
         } yield {
