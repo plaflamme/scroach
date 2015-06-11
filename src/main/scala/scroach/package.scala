@@ -1,4 +1,5 @@
 import com.google.common.primitives.UnsignedBytes
+import com.twitter.logging.Logger
 import com.twitter.util.JavaTimer
 
 package object scroach {
@@ -7,6 +8,8 @@ package object scroach {
   case class ConditionFailedException(actualValue: Option[Bytes]) extends RuntimeException
 
   private[scroach] implicit val Timer = new JavaTimer(isDaemon = true)
+
+  private[scroach] val ScroachLog = Logger.get("scroach")
 
   type Bytes = Array[Byte]
 

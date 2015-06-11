@@ -1,4 +1,5 @@
-package scroach.proto
+package scroach
+package proto
 
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicReference
@@ -7,6 +8,7 @@ import cockroach.proto._
 import com.trueaccord.scalapb.GeneratedMessage
 import com.twitter.finagle.{Filter, SimpleFilter, Service}
 import com.twitter.finagle.httpx.{RequestBuilder, Response, Request}
+import com.twitter.logging.Level
 import com.twitter.util.{Duration, Stopwatch, Return, Throw}
 
 trait Kv {
@@ -91,6 +93,7 @@ case class TxKv(kv: Kv, name: String = util.Random.alphanumeric.take(20).mkStrin
 case class HttpKv(client: Service[Request, Response]) extends Kv {
 
   private[this] case class LoggingFilter[Req <: GeneratedMessage <% CockroachRequest[Req], Res <: GeneratedMessage <% CockroachResponse[Res]](cmd: String) extends SimpleFilter[Req,Res] {
+
     implicit class OptionLogging[T](opt: Option[T]) {
       def toLog: String = opt.fold("") { _.toString }
     }
@@ -145,7 +148,7 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
     def logRequest(nonce: String, request: Req) = {
       val hdrStr = hdrString(request.header)
       val txStr = txnString(request.header.txn)
-      println(f"[$nonce]         ->$cmd%-14s $txStr")
+      ScroachLog.trace(f"[$nonce]         ->$cmd%-14s $txStr")
     }
 
     def logResponse(nonce: String, response: Res, duration: Duration) = {
@@ -154,11 +157,11 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
         errString(response.header.error)
       ) filter(_.nonEmpty) mkString(" ")
 
-      println(f"[$nonce] ${duration.inMillis}%5dms <-$cmd%-14s $status")
+      ScroachLog.trace(f"[$nonce] ${duration.inMillis}%5dms <-$cmd%-14s $status")
     }
 
     def logException(nonce: String, exception: Throwable, duration: Duration) = {
-      println(f"[$nonce] ${duration.inMillis}%5d <-$cmd%-14s ${exception.getMessage}")
+      ScroachLog.trace(f"[$nonce] ${duration.inMillis}%5d <-$cmd%-14s ${exception.getMessage}")
     }
 
     def apply(req: Req, service: Service[Req,Res]) = {
@@ -199,7 +202,7 @@ case class HttpKv(client: Service[Request, Response]) extends Kv {
   val endTxEndpoint = newEndpoint[EndTransactionRequest, EndTransactionResponse]("EndTransaction", EndTransactionResponse.parseFrom)
 
   private[this] def newEndpoint[Req <: GeneratedMessage <% CockroachRequest[Req], Res <: GeneratedMessage <% CockroachResponse[Res]](name: String, parseFrom: (InputStream) => Res): Service[Req, Res] = {
-    // TODO: retrying semantics for 429 and possibly 500s
-    LoggingFilter[Req, Res](name) andThen ProtobufFilter[Req, Res](name, parseFrom) andThen client
+    val cockroach = ProtobufFilter[Req, Res](name, parseFrom) andThen client
+    if(ScroachLog.isLoggable(Level.TRACE)) LoggingFilter[Req, Res](name) andThen cockroach else cockroach
   }
 }

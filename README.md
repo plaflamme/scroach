@@ -7,12 +7,28 @@ Scala client for [CockroachDB](https://github.com/cockroachdb/cockroach/) using 
 Getting it
 ==========
 
-Scroach has not yet been released, so you will need to compile and deploy it locally: `sbt publish-local` should get you there.
+Scroach is still under development, but some early releases are being published to bintray. You can use that to try it out, but the API is not stable yet, so use at your own risk.
 
-Then add it as a dependency to your project:
+Add the following to your sbt `project/plugins.sbt` file:
+
+```scala
+addSbtPlugin("me.lessis" % "bintray-sbt" % "0.3.0")
+```
+
+_NOTE_ this plugin targets sbt 0.13.6+
+
+You will need to add the following to your `project/build.properties` file:
+
+    sbt.version=0.13.8
+
+Then add the repository to your `build.sbt` file:
+
+    resolvers += Resolver.bintrayRepo("scroach", "plaflamme")
+
+and finally add it as a dependency to your project:
 
 ```
-libraryDependencies += "scroach" %% "scroach" % "0.1-SNAPSHOT"
+libraryDependencies += "scroach" %% "scroach" % "0.1-alpha-1"
 ```
 
 Using it
