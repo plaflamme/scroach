@@ -2,16 +2,18 @@ import com.trueaccord.scalapb.{ScalaPbPlugin => PB}
 
 name := "scroach"
 
+version := "0.1-alpha-1"
+
+scalaVersion := "2.10.4"
+
+licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
+
 PB.protobufSettings
 
 PB.runProtoc in PB.protobufConfig := (args =>
   com.github.os72.protocjar.Protoc.runProtoc("-v261" +: args.toArray))
 
 PB.flatPackage in PB.protobufConfig := true
-
-lazy val main = project.in(file("."))
-
-resolvers += bintray.Opts.resolver.mavenRepo("plaflamme")
 
 libraryDependencies ++= Seq(
   "com.twitter" %% "finagle-httpx" % "6.24.0",
