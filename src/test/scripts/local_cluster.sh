@@ -114,7 +114,7 @@ for i in $(seq 1 $NODES); do
   VOL="/data$i"
 
   # Command args specify two data directories per instance to simulate two physical devices.
-  START_ARGS="--gossip=${HOSTS[1]}:$PORT --stores=ssd=$VOL --addr=${HOSTS[$i]}:$PORT --certs=${CERTS_DIR}"
+  START_ARGS="--gossip=${HOSTS[1]}:$PORT --stores=ssd=$VOL --addr=${HOSTS[$i]}:$PORT --certs=${CERTS_DIR} --insecure=true"
   # Log (almost) everything.
   #START_ARGS="${START_ARGS} -v 7"
   # Node-specific arguments for node container.
@@ -151,7 +151,7 @@ if [[ $DOCKERHOST != "127.0.0.1" ]]; then
 fi
 
 # Fetch the local status contents from node 1 and verify build information is present.
-LOCAL_URL="https://$DOCKERHOST:${PORTS[1]}/_status/local/"
+LOCAL_URL="http://$DOCKERHOST:${PORTS[1]}/_status/local/"
 LOCAL=$(curl --noproxy '*' -k -s $LOCAL_URL)
 if [[ -z $LOCAL ]]; then
 	echo "Failed to fetch status from node 1 (${LOCAL_URL})"
@@ -176,7 +176,7 @@ for ATTEMPT in $(seq 1 $MAX_WAIT); do
   FOUND=0
   for i in $(seq 1 $NODES); do
     FOUND_NAMES=""
-    GOSSIP_URL="https://$DOCKERHOST:${PORTS[$i]}/_status/gossip"
+    GOSSIP_URL="http://$DOCKERHOST:${PORTS[$i]}/_status/gossip"
     GOSSIP=$(curl --noproxy '*' -k -s -m 1 $GOSSIP_URL)
     for j in $(seq 1 $((2*NODES))); do
       if [[ ! -z $(echo $GOSSIP | grep "node:$j") ]]; then
