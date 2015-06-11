@@ -216,6 +216,7 @@ class ClientSpec extends ScroachSpec with CockroachCluster {
     }
 
     for {
+      _ <- client.deleteRange(keys.head, keys.last.next)
       _ <- Future.collect(keys.map(k => client.put(k, randomBytes)).toSeq)
       scanner <- client.scan(keys.head, keys.last.next, 10)
       result <- scanner.foldLeft(0) { case(b, (key, value)) => b + 1 }
