@@ -4,7 +4,7 @@ name := "scroach"
 
 version := "0.1-alpha-1"
 
-scalaVersion := "2.10.4"
+scalaVersion := "2.10.5"
 
 licenses += ("Apache-2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))
 
