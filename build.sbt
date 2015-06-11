@@ -2,6 +2,8 @@ import com.trueaccord.scalapb.{ScalaPbPlugin => PB}
 
 name := "scroach"
 
+organization := "scroach"
+
 version := "0.1-alpha-1"
 
 scalaVersion := "2.10.5"
