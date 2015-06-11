@@ -19,7 +19,12 @@ libraryDependencies ++= Seq(
   "org.scalacheck" %% "scalacheck" % "1.12.1" % "test"
 )
 
-testOptions in Test += Tests.Argument("-l", "SlowTest")
+def whenCircleBuild[T](f: => T): Seq[T] = sys.env.get("CIRCLE_BUILD_NUM").map { _ => f }.toSeq
+
+// Disable tests tagged with SlowTest during circle-ci builds
+testOptions in Test ++= whenCircleBuild(Tests.Argument("-l", "SlowTest"))
+
+testOptions in Test += Tests.Setup { () => "src/test/scripts/local_cluster.sh start" ! }
 
 fork in run := true
 

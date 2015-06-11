@@ -112,7 +112,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
   }
 
   // A history is a sequence of interleaving TxCmd
-  case class History(id: Int, cmds: List[TxCmd])
+  case class History(cmds: List[TxCmd])
 
   // A TestCase is a single history with an isolation level and a priority for each of its transactions
   case class TestCase(history: History, isolationLevels: Seq[IsolationType], priorities: Seq[Int]) {
@@ -120,7 +120,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     private[this] val nonce = scala.util.Random.alphanumeric.take(20).mkString
 
     val uniqKey: Bijection[String, Bytes] = new Bijection[String, Bytes] {
-      def apply(key: String)  = s"$nonce/${history.id}/$key".getBytes(Charsets.Utf8)
+      def apply(key: String)  = s"$nonce/$key".getBytes(Charsets.Utf8)
       def invert(bytes: Bytes) = new String(bytes, Charsets.Utf8).split("/").last
     }
 
@@ -145,8 +145,8 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
         histories.flatMap { h =>
           interleave(h, c, symmetric)
         }
-      }.zipWithIndex.map { case(history, id) =>
-        History(id, history)
+      }.map { history =>
+        History(history)
       }
 
       val priorities = (for(i <- 1 to cmds.size) yield i).permutations.toSeq
@@ -209,16 +209,15 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
   object Verifier {
     def apply(client: Client, txs: Seq[Seq[Cmd]], isolations: Seq[IsolationType], symmetric: Boolean)(f: (TestCase, Seq[Try[TxState]]) => Future[Unit]) = {
-      Planner(txs, isolations, symmetric)
-        .foldLeft(Future.Done) { case(previous, testCase) =>
+      val cases = Planner(txs, isolations, symmetric)
+        .map { testCase =>
           for {
-            _ <- previous
-            _ = println(testCase)
             results <- Runner.run(client, testCase)
             _ <- f(testCase, results)
-            _ = println("========")
           } yield ()
         }
+
+      Future.collect(cases).unit
     }
   }
 
@@ -233,7 +232,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("A"), Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("C")) map { r =>
         r should contain oneOf (2, 0)
       }
@@ -244,7 +243,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn = Seq(Read("A"), Incr("A"), Commit)
 
     Verifier(client, Seq(txn, txn), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("A")) map { r =>
         r.value should be(2)
       }
@@ -256,7 +255,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       for {
         (d,e) <- client.getCounter(testCase.uniqKey("D")) join client.getCounter(testCase.uniqKey("E"))
       } yield {
@@ -270,7 +269,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
     val txn2 = Seq(Incr("B"), Commit)
 
     Verifier(client, Seq(txn1, txn2), BothIsolations, false) { case(testCase, results) =>
-      results.forall(_.isReturn) shouldBe true
+      results.filter(_.isThrow) shouldBe ('empty)
       client.getCounter(testCase.uniqKey("D")) map { r =>
         r.value should be(0)
       }
@@ -283,6 +282,7 @@ class TxCorrectnessSpecs extends ScroachSpec with CockroachCluster {
 
     def verify(allowed: (Int, Int)*) = {
       (testCase: TestCase, results: Seq[Try[TxState]]) => {
+        results.filter(_.isThrow) shouldBe ('empty)
         for {
           (a, b) <- client.getCounter(testCase.uniqKey("A")) join client.getCounter(testCase.uniqKey("B"))
         } yield {
