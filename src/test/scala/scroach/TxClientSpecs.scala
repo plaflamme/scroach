@@ -24,12 +24,12 @@ class TxClientSpecs extends ScroachSpec {
       private[this] var requestIdx = 0
       override val putEndpoint = Service.mk { (req: PutRequest) =>
         val (expTs, newTs) = timestamps(requestIdx)
-        val respTx = req.header.txn.map { tx =>
+        val respTx = req.header.get.txn.map { tx =>
           tx.timestamp.getOrElse(timestamp(0, 0)) should be(expTs)
           tx.copy(id = tx.id orElse Some(ByteString.copyFromUtf8("tx-id")), timestamp = Some(newTs))
         }
         requestIdx += 1
-        Future.value(PutResponse(ResponseHeader(txn = respTx)))
+        Future.value(PutResponse(header = Some(ResponseHeader(txn = respTx))))
       }
     }
 
@@ -60,18 +60,18 @@ class TxClientSpecs extends ScroachSpec {
     val kv = new TestKv {
       private[this] var first = true
       override val endTxEndpoint = Service.mk { (req: EndTransactionRequest) =>
-        req.header.txn match {
+        req.header.get.txn match {
           case Some(txn) => {
             txn.id should be ('empty)
             if(first) {
               first = false
               val respTx = txn.copy(id = Some(ByteString.copyFromUtf8("tx-id")), timestamp = Some(timestamp(10, 0)), priority = Some(4))
-              Future.value(EndTransactionResponse(header = ResponseHeader(error = Some(txAbortError(respTx)), txn = Some(respTx))))
+              Future.value(EndTransactionResponse(header = Some(ResponseHeader(error = Some(txAbortError(respTx)), txn = Some(respTx)))))
             } else {
               // Client is expected to use the provided tx priority for future transactions
               txn.priority.value should be(4)
               val respTx = txn.copy(id = Some(ByteString.copyFromUtf8("tx-id2")), timestamp = Some(timestamp(10, 0)))
-              Future.value(EndTransactionResponse(header = ResponseHeader(txn = Some(respTx))))
+              Future.value(EndTransactionResponse(header = Some(ResponseHeader(txn = Some(respTx)))))
             }
           }
           case None => Future.exception(new IllegalStateException())

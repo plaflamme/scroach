@@ -140,40 +140,38 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
   }
 
   def get(key: Bytes): Batch[Option[Bytes]] = {
-    batch(GetRequest(header = header(key)), _.value.get, ResponseHandlers.get)
+    batch(GetRequest(header = Some(header(key))), _.value.get, ResponseHandlers.get)
   }
 
   def getCounter(key: Bytes): Batch[Option[Long]] = {
-    batch(GetRequest(header = header(key)), _.value.get, ResponseHandlers.getCounter)
+    batch(GetRequest(header = Some(header(key))), _.value.get, ResponseHandlers.getCounter)
   }
 
   def put(key: Bytes, value: Bytes): Batch[Unit] = {
-    batch(PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(value))))), _.value.put, ResponseHandlers.put)
+    batch(PutRequest(header = Some(header(key)), value = Some(Value(bytes = Some(ByteString.copyFrom(value))))), _.value.put, ResponseHandlers.put)
   }
 
-  def put(key: Bytes, value: Long): Batch[Unit] = {
-    batch(PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Integer(value)))), _.value.put, ResponseHandlers.put)
-  }
+  def put(key: Bytes, value: Long): Batch[Unit] = ???
 
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Batch[Unit] = {
     val req = ConditionalPutRequest(
-      header = header(key),
-      expValue = previous.map(p => Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(p)))),
-      value = Some(Value(valiu = value.map(v => Value.Valiu.Bytes(ByteString.copyFrom(v))).getOrElse(Value.Valiu.Empty)))
+      header = Some(header(key)),
+      expValue = previous.map(p => Value(bytes = Some(ByteString.copyFrom(p)))),
+      value = value.map { v => Value(bytes = Some(ByteString.copyFrom(v))) }
     )
     batch(req, _.value.conditionalPut,  ResponseHandlers.cas)
   }
 
   def increment(key: Bytes, amount: Long): Batch[Long] = {
     val req = IncrementRequest(
-      header = header(key),
+      header = Some(header(key)),
       increment = Some(amount)
     )
     batch(req, _.value.increment,  ResponseHandlers.increment)
   }
 
   def delete(key: Bytes): Batch[Unit] = {
-    val req = DeleteRequest(header = header(key))
+    val req = DeleteRequest(header = Some(header(key)))
     batch(req, _.value.delete,  ResponseHandlers.delete)
   }
 
@@ -183,7 +181,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     if(maxToDelete == 0) Batch.const(0) // short-circuit
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
-      val req = DeleteRangeRequest(header = h, maxEntriesToDelete = Some(maxToDelete))
+      val req = DeleteRangeRequest(header = Some(h), maxEntriesToDelete = Some(maxToDelete))
       batch(req, _.value.deleteRange,  ResponseHandlers.deleteRange)
     }
   }
@@ -197,7 +195,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
     if(from == to) Batch.const(Seq.empty)
     else {
       val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
-      val req = ScanRequest(header = h, maxResults = Some(maxResults))
+      val req = ScanRequest(header = Some(h), maxResults = Some(maxResults))
       batch(req, _.value.scan, handler)
     }
   }
@@ -208,7 +206,7 @@ case class KvBatchClient(kv: Kv, user: String) extends BatchClient {
       if(input.isEmpty) Future.value(Seq.empty)
       else {
         // TODO: short-circuit batches of one (?). If we do this, we could actually write the normal client in terms of this one.
-        val batchRequest = BatchRequest(header = header(), requests = input.toVector)
+        val batchRequest = BatchRequest(header = Some(header()), requests = input.toVector)
         kv.batchEndpoint(batchRequest)
           .map {
             _.responses.map(Return(_)) // TODO: the Try semantics should be moved down into the response type e.g: Try[ContainsResponse]

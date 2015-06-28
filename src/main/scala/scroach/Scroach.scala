@@ -2,7 +2,6 @@ package scroach
 
 import java.net.InetSocketAddress
 
-import com.google.protobuf.MessageLite
 import com.trueaccord.scalapb.GeneratedMessage
 import com.twitter.app.App
 import com.twitter.finagle._
@@ -12,7 +11,7 @@ import cockroach.proto._
 private[scroach] object ResponseHandlers {
 
   def handler[M <: GeneratedMessage <% CockroachResponse[M], T](f: M => T): M => T = { res =>
-    res.header match {
+    Some(res.header) match { // TODO: we need to wrap the header back in Option here which is kinda dumb!
       case HasError(err) => throw new CockroachException(err, res)
       case NoError(_) => f(res)
     }
@@ -43,12 +42,12 @@ private[scroach] object ResponseHandlers {
   }
   val scan = handler[ScanResponse, Seq[(Bytes, Bytes)]] {
     case ScanResponse(NoError(_), rows) => rows.collect {
-      case KeyValue(key, Some(BytesValue(Some(bytes)))) => (key.toByteArray, bytes)
+      case KeyValue(Some(key), Some(BytesValue(Some(bytes)))) => (key.toByteArray, bytes)
     }
   }
   val scanCounters = handler[ScanResponse, Seq[(Bytes, Long)]] {
     case ScanResponse(NoError(_), rows) => rows.collect {
-      case KeyValue(key, Some(CounterValue(Some(value)))) => (key.toByteArray, value)
+      case KeyValue(Some(key), Some(CounterValue(Some(value)))) => (key.toByteArray, value)
     }
   }
 }

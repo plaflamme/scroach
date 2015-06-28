@@ -20,8 +20,8 @@ package object proto {
   object BytesValue {
     def unapply(value: Value): Option[Option[Bytes]] = {
       value match {
-        case Value(_, _, _, Value.Valiu.Bytes(bytes)) => Some(Some(bytes.toByteArray))
-        case Value(_, _, _, Value.Valiu.Empty) => Some(None)
+        case Value(Some(bytes), _, _, _) => Some(Some(bytes.toByteArray))
+        case Value(None, _, _, _) => Some(None)
         case _ => None
       }
     }
@@ -29,8 +29,8 @@ package object proto {
   object CounterValue {
     def unapply(value: Value): Option[Option[Long]] = {
       value match {
-        case Value(_, _, _, Value.Valiu.Integer(v)) => Some(Some(v))
-        case Value(_, _, _, Value.Valiu.Empty) => Some(None)
+        case Value(Some(bytes), _, _, _) if(bytes.size == 8) => Some(Some(bytes.toByteArray.decodeLong))
+        case Value(None, _, _, _) => Some(None)
         case _ => None
       }
     }
@@ -40,25 +40,27 @@ package object proto {
    * Matches the header of a response that has no error set
    */
   object NoError {
-    def unapply(h: ResponseHeader) = {
-      h match {
-        case ResponseHeader(None, _, _) => Some(h)
-        case _ => None
+    def unapply(header: Option[ResponseHeader]) = {
+      header match {
+        case Some(h@ResponseHeader(None, _, _)) => Some(h)
+        case Some(_) => None // no error
+        case None => throw new IllegalStateException("missing header")
       }
     }
   }
   object HasError {
-    def unapply(h: ResponseHeader) = {
-      h match {
-        case ResponseHeader(Some(err), _, _) => Some(err)
-        case _ => None
+    def unapply(header: Option[ResponseHeader]) = {
+      header match {
+        case Some(ResponseHeader(Some(err), _, _)) => Some(err)
+        case Some(_) => None // no error
+        case None => throw new IllegalStateException("missing header")
       }
     }
   }
   object ConditionFailed {
-    def unapply(h: ResponseHeader) = {
-      h match {
-        case ResponseHeader(Some(err), _, _) if(err.getDetail.value.conditionFailed.isDefined) => err.getDetail.value.conditionFailed
+    def unapply(header: Option[ResponseHeader]) = {
+      header match {
+        case Some(ResponseHeader(Some(err), _, _)) if(err.getDetail.value.conditionFailed.isDefined) => err.getDetail.value.conditionFailed
         case _ => None
       }
     }
@@ -75,94 +77,94 @@ package object proto {
   }
 
   implicit class RichGetRequest(req: GetRequest) extends CockroachRequest[GetRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.Get(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichGetResponse(res: GetResponse) extends CockroachResponse[GetResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichPutRequest(req: PutRequest) extends CockroachRequest[PutRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.Put(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichPutResponse(res: PutResponse) extends CockroachResponse[PutResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichConditionalPutRequest(req: ConditionalPutRequest) extends CockroachRequest[ConditionalPutRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.ConditionalPut(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichConditionalPutResponse(res: ConditionalPutResponse) extends CockroachResponse[ConditionalPutResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichIncrementRequest(req: IncrementRequest) extends CockroachRequest[IncrementRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.Increment(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichIncrementResponse(res: IncrementResponse) extends CockroachResponse[IncrementResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichDeleteRequest(req: DeleteRequest) extends CockroachRequest[DeleteRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.Delete(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichDeleteResponse(res: DeleteResponse) extends CockroachResponse[DeleteResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichDeleteRangeRequest(req: DeleteRangeRequest) extends CockroachRequest[DeleteRangeRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.DeleteRange(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichDeleteRangeResponse(res: DeleteRangeResponse) extends CockroachResponse[DeleteRangeResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichScanRequest(req: ScanRequest) extends CockroachRequest[ScanRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.Scan(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichScanResponse(res: ScanResponse) extends CockroachResponse[ScanResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichBatchRequest(req: BatchRequest) extends CockroachRequest[BatchRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = ???
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichBatchResponse(res: BatchResponse) extends CockroachResponse[BatchResponse] {
-    val header = res.header
+    val header = res.header.get
   }
   implicit class RichEndTransactionRequest(req: EndTransactionRequest) extends CockroachRequest[EndTransactionRequest] {
-    val header = req.header
+    val header = req.header.get
     def batched = RequestUnion(RequestUnion.Value.EndTransaction(req))
     def tx(txn: Transaction) = {
-      req.copy(header = req.header.copy(txn = Some(txn)))
+      req.withHeader(header.withTxn(txn))
     }
   }
   implicit class RichEndTransactionResponse(res: EndTransactionResponse) extends CockroachResponse[EndTransactionResponse] {
-    val header = res.header
+    val header = res.header.get
   }
 
   implicit class TimestampOrder(val x: Timestamp) extends AnyVal with Ordered[Timestamp] {

@@ -30,11 +30,11 @@ trait Client extends BaseClient {
 
 case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends Client {
   private[this] val someUser = Some(user)
-  private[this] def header(): RequestHeader = {
-    RequestHeader(user = someUser, userPriority = priority)
+  private[this] def header(): Option[RequestHeader] = {
+    Some(RequestHeader(user = someUser, userPriority = priority))
   }
-  private[this] def header(key: Bytes): RequestHeader = {
-    header().copy(key = Option(key).map(ByteString.copyFrom(_)))
+  private[this] def header(key: Bytes): Option[RequestHeader] = {
+    header().map(_.copy(key = Option(key).map(ByteString.copyFrom(_))))
   }
 
   def get(key: Bytes): Future[Option[Bytes]] = {
@@ -50,14 +50,11 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
   }
 
   def put(key: Bytes, value: Bytes): Future[Unit] = {
-    val req = PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(value)))))
+    val req = PutRequest(header = header(key), value = Some(Value(bytes = Some(ByteString.copyFrom(value)))))
     kv.putEndpoint(req).map { ResponseHandlers.put }
   }
 
-  def put(key: Bytes, value: Long): Future[Unit] = {
-    val req = PutRequest(header = header(key), value = Some(Value(valiu = Value.Valiu.Integer(value))))
-    kv.putEndpoint(req).map { ResponseHandlers.put }
-  }
+  def put(key: Bytes, value: Long): Future[Unit] = put(key, value.encodeBytes())
 
   def compareAndSet(key: Bytes, previous: Option[Bytes], value: Option[Bytes]): Future[Unit] = {
     // TODO: verify the semantics of the params:
@@ -65,8 +62,8 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     // value is required, how do you compare-and-delete?
     val req = ConditionalPutRequest(
       header = header(key),
-      expValue = previous.map(p => Value(valiu = Value.Valiu.Bytes(ByteString.copyFrom(p)))),
-      value = Some(Value(valiu = value.map(v => Value.Valiu.Bytes(ByteString.copyFrom(v))).getOrElse(Value.Valiu.Empty)))
+      expValue = previous.map(v => Value(bytes = Some(ByteString.copyFrom(v)))),
+      value = value.map(v => Value(bytes = Some(ByteString.copyFrom(v))))
     )
     kv.casEndpoint(req).map { ResponseHandlers.cas }
   }
@@ -86,7 +83,7 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     require(from <= to, "from should be less or equal to") // TODO: should from be strictly less than to?
     if(maxToDelete == 0) Future.value(0) // short-circuit
     else {
-      val h = header(from).copy(endKey = Some(ByteString.copyFrom(to)))
+      val h = header(from).map(_.withEndKey(ByteString.copyFrom(to)))
       val req = DeleteRangeRequest(header = h, maxEntriesToDelete = Some(maxToDelete))
       kv.deleteRangeEndpoint(req).map { ResponseHandlers.deleteRange }
     }
@@ -103,7 +100,7 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
     def scanBatch(start: Bytes): Future[Unit] = {
       val scan = if(start >= to) Future.value(Seq.empty)
       else {
-        val h = header(start).withEndKey(ByteString.copyFrom(to))
+        val h = header(start).map(_.withEndKey(ByteString.copyFrom(to)))
         val req = ScanRequest(header = h, maxResults = Some(batchSize))
         kv.scanEndpoint(req).map(handler)
       }
@@ -132,7 +129,7 @@ case class KvClient(kv: Kv, user: String, priority: Option[Int] = None) extends 
 
     def endTx(commit: Boolean) = {
       val header = RequestHeader(user = txUser orElse someUser, userPriority = priority)
-      val endTxRequest = EndTransactionRequest(header = header, commit = Some(commit))
+      val endTxRequest = EndTransactionRequest(header = Some(header), commit = Some(commit))
       txKv.endTxEndpoint(endTxRequest)
         .map {
           case EndTransactionResponse(NoError(_), _, _) => ()
